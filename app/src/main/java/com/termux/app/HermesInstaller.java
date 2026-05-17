@@ -57,7 +57,7 @@ public class HermesInstaller {
     private static final String HERMES_BASH_INIT_VERSION = "2";
     private static final String HERMES_APT_CONF_VERSION = "4";
     private static final String HERMES_DPKG_CONF_VERSION = "1";
-    private static final String HERMES_SHELL_PROFILE_VERSION = "2";
+    private static final String HERMES_SHELL_PROFILE_VERSION = "3";
     private static final String HERMES_PATH_REWRITE_VERSION = "4";
     private static final String HERMES_SYMLINK_FIX_VERSION = "2";
     private static final String HERMES_DPKG_DB_FIX_VERSION = "2";
@@ -1050,12 +1050,11 @@ public class HermesInstaller {
 
     private static void deployShellProfile() throws Exception {
         String home = TermuxConstants.TERMUX_HOME_DIR_PATH;
-        String prefix = TermuxConstants.TERMUX_PREFIX_DIR_PATH;
         File bashrc = new File(home, ".bashrc");
+        // Do NOT source $PREFIX/etc/profile from .bashrc — the profile already
+        // sources .bashrc for interactive bash login shells, so doing it here
+        // creates infinite recursion → stack overflow → SIGSEGV.
         String hermesBlock = "\n# Hermes Terminal Configuration\n"
-                + "if [ -f \"$PREFIX/etc/profile\" ]; then\n"
-                + "    . \"$PREFIX/etc/profile\"\n"
-                + "fi\n"
                 + "export USER=hermes\n"
                 + "export LOGNAME=hermes\n"
                 + "\n"
@@ -1063,18 +1062,33 @@ public class HermesInstaller {
 
         if (bashrc.exists()) {
             String content = readFile(bashrc);
-            // Remove the old LD_PRELOAD block that causes SIGSEGV crash loops
-            // when bash re-enables LD_PRELOAD after crash recovery disabled it.
+            boolean modified = false;
+
+            // Remove the profile sourcing that causes infinite recursion.
+            String oldProfileSource = "if [ -f \"$PREFIX/etc/profile\" ]; then\n"
+                    + "    . \"$PREFIX/etc/profile\"\n"
+                    + "fi\n";
+            if (content.contains(oldProfileSource)) {
+                content = content.replace(oldProfileSource, "");
+                modified = true;
+                Logger.logInfo(LOG_TAG, "Removed recursive profile source from .bashrc");
+            }
+
+            // Remove the old LD_PRELOAD block.
             String oldLdPreloadBlock = "# Ensure path rewrite is always active\n"
                     + "if [ -z \"$LD_PRELOAD\" ] && [ -f \"$PREFIX/lib/libpath_rewrite.so\" ]; then\n"
                     + "    export LD_PRELOAD=\"$PREFIX/lib/libpath_rewrite.so\"\n"
                     + "fi\n";
             if (content.contains(oldLdPreloadBlock)) {
                 content = content.replace(oldLdPreloadBlock, "");
+                modified = true;
+                Logger.logInfo(LOG_TAG, "Removed old LD_PRELOAD block from .bashrc");
+            }
+
+            if (modified) {
                 try (FileOutputStream out = new FileOutputStream(bashrc)) {
                     out.write(content.getBytes("UTF-8"));
                 }
-                Logger.logInfo(LOG_TAG, "Removed old LD_PRELOAD block from .bashrc");
             }
 
             if (!content.contains("Hermes Terminal Configuration")) {
