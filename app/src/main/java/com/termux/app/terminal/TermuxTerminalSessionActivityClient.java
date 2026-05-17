@@ -221,8 +221,8 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
                 Logger.logWarn(LOG_TAG, "Terminal crashed with signal 11 after " + uptimeMs
                     + "ms, disabling LD_PRELOAD and restarting session");
                 TermuxShellEnvironment.reportTerminalSignal11();
-                removeFinishedSession(finishedSession);
                 addNewSession(false, null);
+                removeFinishedSession(finishedSession);
             }
         }
 
@@ -234,8 +234,8 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
             if (uptimeMs < 10_000) {
                 Logger.logWarn(LOG_TAG, "Terminal killed with signal 9 after " + uptimeMs
                     + "ms, restarting session");
-                removeFinishedSession(finishedSession);
                 addNewSession(false, null);
+                removeFinishedSession(finishedSession);
             }
         }
     }
