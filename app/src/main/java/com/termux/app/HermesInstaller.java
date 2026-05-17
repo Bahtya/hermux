@@ -1060,6 +1060,20 @@ public class HermesInstaller {
 
         if (bashrc.exists()) {
             String content = readFile(bashrc);
+            // Remove the old LD_PRELOAD block that causes SIGSEGV crash loops
+            // when bash re-enables LD_PRELOAD after crash recovery disabled it.
+            String oldLdPreloadBlock = "# Ensure path rewrite is always active\n"
+                    + "if [ -z \"$LD_PRELOAD\" ] && [ -f \"$PREFIX/lib/libpath_rewrite.so\" ]; then\n"
+                    + "    export LD_PRELOAD=\"$PREFIX/lib/libpath_rewrite.so\"\n"
+                    + "fi\n";
+            if (content.contains(oldLdPreloadBlock)) {
+                content = content.replace(oldLdPreloadBlock, "");
+                try (FileOutputStream out = new FileOutputStream(bashrc)) {
+                    out.write(content.getBytes("UTF-8"));
+                }
+                Logger.logInfo(LOG_TAG, "Removed old LD_PRELOAD block from .bashrc");
+            }
+
             if (!content.contains("Hermes Terminal Configuration")) {
                 try (FileOutputStream out = new FileOutputStream(bashrc, true)) {
                     out.write(hermesBlock.getBytes("UTF-8"));
