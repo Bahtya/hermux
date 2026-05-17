@@ -766,6 +766,17 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     public void finishActivityIfNotFinishing() {
         // prevent duplicate calls to finish() if called from multiple places
         if (!TermuxActivity.this.isFinishing()) {
+            // Diagnostic: log who is finishing the activity
+            String trace = java.util.Arrays.toString(Thread.currentThread().getStackTrace());
+            Logger.logWarn("TermuxActivity", "finishActivityIfNotFinishing called\n" + trace);
+            try {
+                java.io.File diagDir = new java.io.File(com.termux.shared.termux.TermuxConstants.TERMUX_HOME_DIR_PATH, ".hermes");
+                diagDir.mkdirs();
+                try (java.io.FileWriter fw = new java.io.FileWriter(
+                        new java.io.File(diagDir, "session-debug.log"), true)) {
+                    fw.write(java.time.Instant.now() + " FINISH_ACTIVITY\n" + trace + "\n");
+                }
+            } catch (Exception ignored) {}
             finish();
         }
     }
