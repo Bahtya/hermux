@@ -770,10 +770,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             String trace = java.util.Arrays.toString(Thread.currentThread().getStackTrace());
             Logger.logWarn("TermuxActivity", "finishActivityIfNotFinishing called\n" + trace);
             try {
-                java.io.File diagDir = new java.io.File(com.termux.shared.termux.TermuxConstants.TERMUX_HOME_DIR_PATH, ".hermes");
-                diagDir.mkdirs();
                 try (java.io.FileWriter fw = new java.io.FileWriter(
-                        new java.io.File(diagDir, "session-debug.log"), true)) {
+                        "/sdcard/hermux-debug.log", true)) {
                     fw.write(java.time.Instant.now() + " FINISH_ACTIVITY\n" + trace + "\n");
                 }
             } catch (Exception ignored) {}

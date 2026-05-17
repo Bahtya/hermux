@@ -139,17 +139,15 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
 
     @Override
     public void onSessionFinished(@NonNull TerminalSession finishedSession) {
-        // Diagnostic: write session exit info to file for post-crash analysis
+        // Diagnostic: write session exit info to /sdcard/ for post-crash analysis
         try {
             long uptimeMs = System.currentTimeMillis() - finishedSession.getCreateTimeMs();
             int exitStatus = finishedSession.getExitStatus();
             String line = java.time.Instant.now() + " session_finished exit=" + exitStatus
                 + " uptime=" + uptimeMs + "ms"
                 + " name=" + finishedSession.mSessionName + "\n";
-            java.io.File diagDir = new java.io.File(TermuxConstants.TERMUX_HOME_DIR_PATH, ".hermes");
-            diagDir.mkdirs();
             try (java.io.FileWriter fw = new java.io.FileWriter(
-                    new java.io.File(diagDir, "session-debug.log"), true)) {
+                    "/sdcard/hermux-debug.log", true)) {
                 fw.write(line);
             }
         } catch (Exception ignored) {}
@@ -435,9 +433,8 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         // Diagnostic log
         try {
             java.io.File diagDir = new java.io.File(TermuxConstants.TERMUX_HOME_DIR_PATH, ".hermes");
-            diagDir.mkdirs();
             try (java.io.FileWriter fw = new java.io.FileWriter(
-                    new java.io.File(diagDir, "session-debug.log"), true)) {
+                    "/sdcard/hermux-debug.log", true)) {
                 fw.write(java.time.Instant.now() + " addNewSession failsafe=" + isFailSafe
                     + " name=" + sessionName + " sessions=" + service.getTermuxSessionsSize() + "\n");
             }
@@ -516,9 +513,8 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         // Diagnostic log
         try {
             long uptimeMs = System.currentTimeMillis() - finishedSession.getCreateTimeMs();
-            java.io.File diagDir = new java.io.File(TermuxConstants.TERMUX_HOME_DIR_PATH, ".hermes");
             try (java.io.FileWriter fw = new java.io.FileWriter(
-                    new java.io.File(diagDir, "session-debug.log"), true)) {
+                    "/sdcard/hermux-debug.log", true)) {
                 fw.write(java.time.Instant.now() + " removeFinishedSession exit=" + finishedSession.getExitStatus()
                     + " uptime=" + uptimeMs + "ms sessionsBefore=" + service.getTermuxSessionsSize() + "\n");
             }
