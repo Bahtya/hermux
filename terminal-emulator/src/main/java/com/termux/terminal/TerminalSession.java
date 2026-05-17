@@ -435,9 +435,9 @@ public final class TerminalSession extends TerminalOutput {
                                         diag.append("  env: ").append(env).append("\n");
                                 }
                                 diag.append("\n");
-                                java.io.FileWriter fw = new java.io.FileWriter("/sdcard/hermux-debug.log", true);
-                                fw.write(diag.toString());
-                                fw.close();
+                                try (java.io.FileWriter fw = new java.io.FileWriter("/sdcard/hermux-debug.log", true)) {
+                                    fw.write(diag.toString());
+                                }
                             } catch (Exception ignored) {}
                         }
                     } else {
