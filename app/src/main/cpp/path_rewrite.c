@@ -60,6 +60,12 @@ static const char *rewrite2(const char *p) {
     return rewrite_to(p, g_buf2);
 }
 
+/* Resolve a dlsym pointer once and cache it for all future calls.
+ * Usage: RESOLVE(return_type (*real)(params), "name") */
+#define RESOLVE(decl, name) \
+    static decl = NULL; \
+    if (!real) real = dlsym(RTLD_NEXT, name)
+
 /* --- execve shebang patching --- */
 
 /* Clean up stale temp files from previous execve calls.
@@ -169,95 +175,93 @@ static const char *patch_shebang_if_needed(const char *path) {
 }
 
 int execve(const char *pathname, char *const argv[], char *const envp[]) {
-    int (*real_execve)(const char *, char *const [], char *const []) =
-        dlsym(RTLD_NEXT, "execve");
-    if (!real_execve) { errno = ENOSYS; return -1; }
+    RESOLVE(int (*real)(const char *, char *const [], char *const []), "execve");
+    if (!real) { errno = ENOSYS; return -1; }
 
     const char *rewritten = rewrite(pathname);
 
     /* Check if the target file is a script with a shebang needing patching */
     const char *patched = patch_shebang_if_needed(rewritten);
     if (patched) {
-        int ret = real_execve(patched, argv, envp);
+        int ret = real(patched, argv, envp);
         int saved = errno;
         unlink(patched);
         errno = saved;
         return ret;
     }
 
-    return real_execve(rewritten, argv, envp);
+    return real(rewritten, argv, envp);
 }
 
 int execveat(int dirfd, const char *pathname, char *const argv[],
              char *const envp[], int flags) {
-    int (*real_execveat)(int, const char *, char *const [], char *const [], int) =
-        dlsym(RTLD_NEXT, "execveat");
-    if (!real_execveat) { errno = ENOSYS; return -1; }
+    RESOLVE(int (*real)(int, const char *, char *const [], char *const [], int), "execveat");
+    if (!real) { errno = ENOSYS; return -1; }
 
     if (pathname[0] == '/' || dirfd == AT_FDCWD) {
         const char *rewritten = rewrite(pathname);
 
         const char *patched = patch_shebang_if_needed(rewritten);
         if (patched) {
-            int ret = real_execveat(dirfd, patched, argv, envp, flags);
+            int ret = real(dirfd, patched, argv, envp, flags);
             int saved = errno;
             unlink(patched);
             errno = saved;
             return ret;
         }
 
-        return real_execveat(dirfd, rewritten, argv, envp, flags);
+        return real(dirfd, rewritten, argv, envp, flags);
     }
 
-    return real_execveat(dirfd, pathname, argv, envp, flags);
+    return real(dirfd, pathname, argv, envp, flags);
 }
 
 /* --- Intercepted functions --- */
 
 DIR *opendir(const char *name) {
-    DIR *(*real)(const char *) = dlsym(RTLD_NEXT, "opendir");
+    RESOLVE(DIR * (*real)(const char *), "opendir");
     if (!real) return NULL;
     return real(rewrite(name));
 }
 
 int stat(const char *p, struct stat *s) {
-    int (*real)(const char *, struct stat *) = dlsym(RTLD_NEXT, "stat");
+    RESOLVE(int (*real)(const char *, struct stat *), "stat");
     if (!real) return -1;
     return real(rewrite(p), s);
 }
 
 int lstat(const char *p, struct stat *s) {
-    int (*real)(const char *, struct stat *) = dlsym(RTLD_NEXT, "lstat");
+    RESOLVE(int (*real)(const char *, struct stat *), "lstat");
     if (!real) return -1;
     return real(rewrite(p), s);
 }
 
 int fstatat(int fd, const char *p, struct stat *s, int flags) {
-    int (*real)(int, const char *, struct stat *, int) = dlsym(RTLD_NEXT, "fstatat");
+    RESOLVE(int (*real)(int, const char *, struct stat *, int), "fstatat");
     if (!real) return -1;
     return real(fd, rewrite(p), s, flags);
 }
 
 int access(const char *p, int m) {
-    int (*real)(const char *, int) = dlsym(RTLD_NEXT, "access");
+    RESOLVE(int (*real)(const char *, int), "access");
     if (!real) return -1;
     return real(rewrite(p), m);
 }
 
 int faccessat(int fd, const char *p, int m, int flags) {
-    int (*real)(int, const char *, int, int) = dlsym(RTLD_NEXT, "faccessat");
+    RESOLVE(int (*real)(int, const char *, int, int), "faccessat");
     if (!real) return -1;
     return real(fd, rewrite(p), m, flags);
 }
 
 ssize_t readlink(const char *p, char *b, size_t s) {
-    ssize_t (*real)(const char *, char *, size_t) = dlsym(RTLD_NEXT, "readlink");
+    RESOLVE(ssize_t (*real)(const char *, char *, size_t), "readlink");
     if (!real) return -1;
     return real(rewrite(p), b, s);
 }
 
 ssize_t readlinkat(int fd, const char *p, char *b, size_t s) {
-    ssize_t (*real)(int, const char *, char *, size_t) = dlsym(RTLD_NEXT, "readlinkat");
+    RESOLVE(ssize_t (*real)(int, const char *, char *, size_t), "readlinkat");
     if (!real) return -1;
     return real(fd, rewrite(p), b, s);
 }
@@ -270,7 +274,7 @@ int open(const char *p, int f, ...) {
         m = (mode_t)va_arg(a, int);
         va_end(a);
     }
-    int (*real)(const char *, int, ...) = dlsym(RTLD_NEXT, "open");
+    RESOLVE(int (*real)(const char *, int, ...), "open");
     if (!real) return -1;
     return real(rewrite(p), f, m);
 }
@@ -283,7 +287,7 @@ int open64(const char *p, int f, ...) {
         m = (mode_t)va_arg(a, int);
         va_end(a);
     }
-    int (*real)(const char *, int, ...) = dlsym(RTLD_NEXT, "open64");
+    RESOLVE(int (*real)(const char *, int, ...), "open64");
     if (!real) return -1;
     return real(rewrite(p), f, m);
 }
@@ -296,109 +300,109 @@ int openat(int fd, const char *p, int f, ...) {
         m = (mode_t)va_arg(a, int);
         va_end(a);
     }
-    int (*real)(int, const char *, int, ...) = dlsym(RTLD_NEXT, "openat");
+    RESOLVE(int (*real)(int, const char *, int, ...), "openat");
     if (!real) return -1;
     return real(fd, rewrite(p), f, m);
 }
 
 int creat(const char *p, mode_t m) {
-    int (*real)(const char *, mode_t) = dlsym(RTLD_NEXT, "creat");
+    RESOLVE(int (*real)(const char *, mode_t), "creat");
     if (!real) return -1;
     return real(rewrite(p), m);
 }
 
 int rename(const char *o, const char *n) {
-    int (*real)(const char *, const char *) = dlsym(RTLD_NEXT, "rename");
+    RESOLVE(int (*real)(const char *, const char *), "rename");
     if (!real) return -1;
     return real(rewrite(o), rewrite2(n));
 }
 
 int renameat(int oldfd, const char *o, int newfd, const char *n) {
-    int (*real)(int, const char *, int, const char *) = dlsym(RTLD_NEXT, "renameat");
+    RESOLVE(int (*real)(int, const char *, int, const char *), "renameat");
     if (!real) return -1;
     return real(oldfd, rewrite(o), newfd, rewrite2(n));
 }
 
 int unlink(const char *p) {
-    int (*real)(const char *) = dlsym(RTLD_NEXT, "unlink");
+    RESOLVE(int (*real)(const char *), "unlink");
     if (!real) return -1;
     return real(rewrite(p));
 }
 
 int unlinkat(int fd, const char *p, int flags) {
-    int (*real)(int, const char *, int) = dlsym(RTLD_NEXT, "unlinkat");
+    RESOLVE(int (*real)(int, const char *, int), "unlinkat");
     if (!real) return -1;
     return real(fd, rewrite(p), flags);
 }
 
 int mkdir(const char *p, mode_t m) {
-    int (*real)(const char *, mode_t) = dlsym(RTLD_NEXT, "mkdir");
+    RESOLVE(int (*real)(const char *, mode_t), "mkdir");
     if (!real) return -1;
     return real(rewrite(p), m);
 }
 
 int mkdirat(int fd, const char *p, mode_t m) {
-    int (*real)(int, const char *, mode_t) = dlsym(RTLD_NEXT, "mkdirat");
+    RESOLVE(int (*real)(int, const char *, mode_t), "mkdirat");
     if (!real) return -1;
     return real(fd, rewrite(p), m);
 }
 
 int chmod(const char *p, mode_t m) {
-    int (*real)(const char *, mode_t) = dlsym(RTLD_NEXT, "chmod");
+    RESOLVE(int (*real)(const char *, mode_t), "chmod");
     if (!real) return -1;
     return real(rewrite(p), m);
 }
 
 int chown(const char *p, uid_t u, gid_t g) {
-    int (*real)(const char *, uid_t, gid_t) = dlsym(RTLD_NEXT, "chown");
+    RESOLVE(int (*real)(const char *, uid_t, gid_t), "chown");
     if (!real) return -1;
     return real(rewrite(p), u, g);
 }
 
 int lchown(const char *p, uid_t u, gid_t g) {
-    int (*real)(const char *, uid_t, gid_t) = dlsym(RTLD_NEXT, "lchown");
+    RESOLVE(int (*real)(const char *, uid_t, gid_t), "lchown");
     if (!real) return -1;
     return real(rewrite(p), u, g);
 }
 
 int truncate(const char *p, off_t l) {
-    int (*real)(const char *, off_t) = dlsym(RTLD_NEXT, "truncate");
+    RESOLVE(int (*real)(const char *, off_t), "truncate");
     if (!real) return -1;
     return real(rewrite(p), l);
 }
 
 int link(const char *o, const char *n) {
-    int (*real)(const char *, const char *) = dlsym(RTLD_NEXT, "link");
+    RESOLVE(int (*real)(const char *, const char *), "link");
     if (!real) return -1;
     return real(rewrite(o), rewrite2(n));
 }
 
 int symlink(const char *o, const char *n) {
-    int (*real)(const char *, const char *) = dlsym(RTLD_NEXT, "symlink");
+    RESOLVE(int (*real)(const char *, const char *), "symlink");
     if (!real) return -1;
     return real(rewrite(o), rewrite2(n));
 }
 
 char *realpath(const char *p, char *r) {
-    char *(*real)(const char *, char *) = dlsym(RTLD_NEXT, "realpath");
+    RESOLVE(char * (*real)(const char *, char *), "realpath");
     if (!real) return NULL;
     return real(rewrite(p), r);
 }
 
 FILE *fopen(const char *p, const char *m) {
-    FILE *(*real)(const char *, const char *) = dlsym(RTLD_NEXT, "fopen");
+    RESOLVE(FILE * (*real)(const char *, const char *), "fopen");
     if (!real) return NULL;
     return real(rewrite(p), m);
 }
 
 FILE *fopen64(const char *p, const char *m) {
-    FILE *(*real)(const char *, const char *) = dlsym(RTLD_NEXT, "fopen64");
+    RESOLVE(FILE * (*real)(const char *, const char *), "fopen64");
     if (!real) return NULL;
     return real(rewrite(p), m);
 }
 
 FILE *freopen(const char *p, const char *m, FILE *s) {
-    FILE *(*real)(const char *, const char *, FILE *) = dlsym(RTLD_NEXT, "freopen");
+    RESOLVE(FILE * (*real)(const char *, const char *, FILE *), "freopen");
     if (!real) return NULL;
     return real(rewrite(p), m, s);
 }
@@ -406,19 +410,19 @@ FILE *freopen(const char *p, const char *m, FILE *s) {
 /* statx requires Linux 4.11+ / API 28+. On older devices dlsym returns NULL
  * and the call is safely skipped. */
 int statx(int dirfd, const char *p, int flags, unsigned mask, struct statx *s) {
-    int (*real)(int, const char *, int, unsigned, struct statx *) = dlsym(RTLD_NEXT, "statx");
+    RESOLVE(int (*real)(int, const char *, int, unsigned, struct statx *), "statx");
     if (!real) return -1;
     return real(dirfd, rewrite(p), flags, mask, s);
 }
 
 int rmdir(const char *p) {
-    int (*real)(const char *) = dlsym(RTLD_NEXT, "rmdir");
+    RESOLVE(int (*real)(const char *), "rmdir");
     if (!real) return -1;
     return real(rewrite(p));
 }
 
 int remove(const char *p) {
-    int (*real)(const char *) = dlsym(RTLD_NEXT, "remove");
+    RESOLVE(int (*real)(const char *), "remove");
     if (!real) return -1;
     return real(rewrite(p));
 }
@@ -426,19 +430,19 @@ int remove(const char *p) {
 /* --- Timestamp syscalls (needed by dpkg) --- */
 
 int utime(const char *p, const struct utimbuf *t) {
-    int (*real)(const char *, const struct utimbuf *) = dlsym(RTLD_NEXT, "utime");
+    RESOLVE(int (*real)(const char *, const struct utimbuf *), "utime");
     if (!real) return -1;
     return real(rewrite(p), t);
 }
 
 int utimes(const char *p, const struct timeval t[2]) {
-    int (*real)(const char *, const struct timeval [2]) = dlsym(RTLD_NEXT, "utimes");
+    RESOLVE(int (*real)(const char *, const struct timeval [2]), "utimes");
     if (!real) return -1;
     return real(rewrite(p), t);
 }
 
 int utimensat(int fd, const char *p, const struct timespec t[2], int flags) {
-    int (*real)(int, const char *, const struct timespec [2], int) = dlsym(RTLD_NEXT, "utimensat");
+    RESOLVE(int (*real)(int, const char *, const struct timespec [2], int), "utimensat");
     if (!real) return -1;
     if (p && (p[0] == '/' || fd == AT_FDCWD))
         return real(fd, rewrite(p), t, flags);
@@ -448,43 +452,43 @@ int utimensat(int fd, const char *p, const struct timespec t[2], int flags) {
 /* --- *at variants --- */
 
 int fchmodat(int fd, const char *p, mode_t m, int flags) {
-    int (*real)(int, const char *, mode_t, int) = dlsym(RTLD_NEXT, "fchmodat");
+    RESOLVE(int (*real)(int, const char *, mode_t, int), "fchmodat");
     if (!real) return -1;
     return real(fd, rewrite(p), m, flags);
 }
 
 int fchownat(int fd, const char *p, uid_t u, gid_t g, int flags) {
-    int (*real)(int, const char *, uid_t, gid_t, int) = dlsym(RTLD_NEXT, "fchownat");
+    RESOLVE(int (*real)(int, const char *, uid_t, gid_t, int), "fchownat");
     if (!real) return -1;
     return real(fd, rewrite(p), u, g, flags);
 }
 
 int renameat2(int oldfd, const char *o, int newfd, const char *n, unsigned flags) {
-    int (*real)(int, const char *, int, const char *, unsigned) = dlsym(RTLD_NEXT, "renameat2");
+    RESOLVE(int (*real)(int, const char *, int, const char *, unsigned), "renameat2");
     if (!real) return -1;
     return real(oldfd, rewrite(o), newfd, rewrite2(n), flags);
 }
 
 int linkat(int oldfd, const char *o, int newfd, const char *n, int flags) {
-    int (*real)(int, const char *, int, const char *, int) = dlsym(RTLD_NEXT, "linkat");
+    RESOLVE(int (*real)(int, const char *, int, const char *, int), "linkat");
     if (!real) return -1;
     return real(oldfd, rewrite(o), newfd, rewrite2(n), flags);
 }
 
 int symlinkat(const char *o, int fd, const char *n) {
-    int (*real)(const char *, int, const char *) = dlsym(RTLD_NEXT, "symlinkat");
+    RESOLVE(int (*real)(const char *, int, const char *), "symlinkat");
     if (!real) return -1;
     return real(rewrite(o), fd, rewrite2(n));
 }
 
 int mknod(const char *p, mode_t m, dev_t d) {
-    int (*real)(const char *, mode_t, dev_t) = dlsym(RTLD_NEXT, "mknod");
+    RESOLVE(int (*real)(const char *, mode_t, dev_t), "mknod");
     if (!real) return -1;
     return real(rewrite(p), m, d);
 }
 
 int mknodat(int fd, const char *p, mode_t m, dev_t d) {
-    int (*real)(int, const char *, mode_t, dev_t) = dlsym(RTLD_NEXT, "mknodat");
+    RESOLVE(int (*real)(int, const char *, mode_t, dev_t), "mknodat");
     if (!real) return -1;
     return real(fd, rewrite(p), m, d);
 }
@@ -492,19 +496,19 @@ int mknodat(int fd, const char *p, mode_t m, dev_t d) {
 /* --- Filesystem info --- */
 
 int statfs(const char *p, struct statfs *s) {
-    int (*real)(const char *, struct statfs *) = dlsym(RTLD_NEXT, "statfs");
+    RESOLVE(int (*real)(const char *, struct statfs *), "statfs");
     if (!real) return -1;
     return real(rewrite(p), s);
 }
 
 int statvfs(const char *p, struct statvfs *s) {
-    int (*real)(const char *, struct statvfs *) = dlsym(RTLD_NEXT, "statvfs");
+    RESOLVE(int (*real)(const char *, struct statvfs *), "statvfs");
     if (!real) return -1;
     return real(rewrite(p), s);
 }
 
 int truncate64(const char *p, off64_t l) {
-    int (*real)(const char *, off64_t) = dlsym(RTLD_NEXT, "truncate64");
+    RESOLVE(int (*real)(const char *, off64_t), "truncate64");
     if (!real) return -1;
     return real(rewrite(p), l);
 }
@@ -512,7 +516,7 @@ int truncate64(const char *p, off64_t l) {
 /* --- 64-bit / large file variants --- */
 
 FILE *freopen64(const char *p, const char *m, FILE *s) {
-    FILE *(*real)(const char *, const char *, FILE *) = dlsym(RTLD_NEXT, "freopen64");
+    RESOLVE(FILE * (*real)(const char *, const char *, FILE *), "freopen64");
     if (!real) return NULL;
     return real(rewrite(p), m, s);
 }
@@ -520,7 +524,7 @@ FILE *freopen64(const char *p, const char *m, FILE *s) {
 /* --- Directory --- */
 
 int chdir(const char *p) {
-    int (*real)(const char *) = dlsym(RTLD_NEXT, "chdir");
+    RESOLVE(int (*real)(const char *), "chdir");
     if (!real) return -1;
     return real(rewrite(p));
 }
@@ -528,7 +532,7 @@ int chdir(const char *p) {
 /* --- Path resolution --- */
 
 char *canonicalize_file_name(const char *p) {
-    char *(*real)(const char *) = dlsym(RTLD_NEXT, "canonicalize_file_name");
+    RESOLVE(char * (*real)(const char *), "canonicalize_file_name");
     if (!real) return NULL;
     return real(rewrite(p));
 }
@@ -536,49 +540,49 @@ char *canonicalize_file_name(const char *p) {
 /* --- Extended attributes --- */
 
 ssize_t getxattr(const char *p, const char *n, void *v, size_t s) {
-    ssize_t (*real)(const char *, const char *, void *, size_t) = dlsym(RTLD_NEXT, "getxattr");
+    RESOLVE(ssize_t (*real)(const char *, const char *, void *, size_t), "getxattr");
     if (!real) return -1;
     return real(rewrite(p), n, v, s);
 }
 
 ssize_t lgetxattr(const char *p, const char *n, void *v, size_t s) {
-    ssize_t (*real)(const char *, const char *, void *, size_t) = dlsym(RTLD_NEXT, "lgetxattr");
+    RESOLVE(ssize_t (*real)(const char *, const char *, void *, size_t), "lgetxattr");
     if (!real) return -1;
     return real(rewrite(p), n, v, s);
 }
 
 int setxattr(const char *p, const char *n, const void *v, size_t s, int f) {
-    int (*real)(const char *, const char *, const void *, size_t, int) = dlsym(RTLD_NEXT, "setxattr");
+    RESOLVE(int (*real)(const char *, const char *, const void *, size_t, int), "setxattr");
     if (!real) return -1;
     return real(rewrite(p), n, v, s, f);
 }
 
 int lsetxattr(const char *p, const char *n, const void *v, size_t s, int f) {
-    int (*real)(const char *, const char *, const void *, size_t, int) = dlsym(RTLD_NEXT, "lsetxattr");
+    RESOLVE(int (*real)(const char *, const char *, const void *, size_t, int), "lsetxattr");
     if (!real) return -1;
     return real(rewrite(p), n, v, s, f);
 }
 
 ssize_t listxattr(const char *p, char *l, size_t s) {
-    ssize_t (*real)(const char *, char *, size_t) = dlsym(RTLD_NEXT, "listxattr");
+    RESOLVE(ssize_t (*real)(const char *, char *, size_t), "listxattr");
     if (!real) return -1;
     return real(rewrite(p), l, s);
 }
 
 ssize_t llistxattr(const char *p, char *l, size_t s) {
-    ssize_t (*real)(const char *, char *, size_t) = dlsym(RTLD_NEXT, "llistxattr");
+    RESOLVE(ssize_t (*real)(const char *, char *, size_t), "llistxattr");
     if (!real) return -1;
     return real(rewrite(p), l, s);
 }
 
 int removexattr(const char *p, const char *n) {
-    int (*real)(const char *, const char *) = dlsym(RTLD_NEXT, "removexattr");
+    RESOLVE(int (*real)(const char *, const char *), "removexattr");
     if (!real) return -1;
     return real(rewrite(p), n);
 }
 
 int lremovexattr(const char *p, const char *n) {
-    int (*real)(const char *, const char *) = dlsym(RTLD_NEXT, "lremovexattr");
+    RESOLVE(int (*real)(const char *, const char *), "lremovexattr");
     if (!real) return -1;
     return real(rewrite(p), n);
 }
@@ -586,13 +590,13 @@ int lremovexattr(const char *p, const char *n) {
 /* --- FIFO --- */
 
 int mkfifo(const char *p, mode_t m) {
-    int (*real)(const char *, mode_t) = dlsym(RTLD_NEXT, "mkfifo");
+    RESOLVE(int (*real)(const char *, mode_t), "mkfifo");
     if (!real) return -1;
     return real(rewrite(p), m);
 }
 
 int mkfifoat(int fd, const char *p, mode_t m) {
-    int (*real)(int, const char *, mode_t) = dlsym(RTLD_NEXT, "mkfifoat");
+    RESOLVE(int (*real)(int, const char *, mode_t), "mkfifoat");
     if (!real) return -1;
     return real(fd, rewrite(p), m);
 }
@@ -600,7 +604,7 @@ int mkfifoat(int fd, const char *p, mode_t m) {
 /* --- File monitoring --- */
 
 int inotify_add_watch(int fd, const char *p, uint32_t m) {
-    int (*real)(int, const char *, uint32_t) = dlsym(RTLD_NEXT, "inotify_add_watch");
+    RESOLVE(int (*real)(int, const char *, uint32_t), "inotify_add_watch");
     if (!real) return -1;
     return real(fd, rewrite(p), m);
 }
@@ -608,7 +612,7 @@ int inotify_add_watch(int fd, const char *p, uint32_t m) {
 /* --- Access (GNU variant) --- */
 
 int euidaccess(const char *p, int m) {
-    int (*real)(const char *, int) = dlsym(RTLD_NEXT, "euidaccess");
+    RESOLVE(int (*real)(const char *, int), "euidaccess");
     if (!real) return -1;
     return real(rewrite(p), m);
 }
