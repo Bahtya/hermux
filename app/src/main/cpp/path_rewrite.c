@@ -175,44 +175,44 @@ static const char *patch_shebang_if_needed(const char *path) {
 
 int execve(const char *pathname, char *const argv[], char *const envp[]) {
     RESOLVE(int (*)(const char *, char *const [], char *const []), "execve");
-    if (!real_execve) { errno = ENOSYS; return -1; }
+    if (!real) { errno = ENOSYS; return -1; }
 
     const char *rewritten = rewrite(pathname);
 
     /* Check if the target file is a script with a shebang needing patching */
     const char *patched = patch_shebang_if_needed(rewritten);
     if (patched) {
-        int ret = real_execve(patched, argv, envp);
+        int ret = real(patched, argv, envp);
         int saved = errno;
         unlink(patched);
         errno = saved;
         return ret;
     }
 
-    return real_execve(rewritten, argv, envp);
+    return real(rewritten, argv, envp);
 }
 
 int execveat(int dirfd, const char *pathname, char *const argv[],
              char *const envp[], int flags) {
     RESOLVE(int (*)(int, const char *, char *const [], char *const [], int), "execveat");
-    if (!real_execveat) { errno = ENOSYS; return -1; }
+    if (!real) { errno = ENOSYS; return -1; }
 
     if (pathname[0] == '/' || dirfd == AT_FDCWD) {
         const char *rewritten = rewrite(pathname);
 
         const char *patched = patch_shebang_if_needed(rewritten);
         if (patched) {
-            int ret = real_execveat(dirfd, patched, argv, envp, flags);
+            int ret = real(dirfd, patched, argv, envp, flags);
             int saved = errno;
             unlink(patched);
             errno = saved;
             return ret;
         }
 
-        return real_execveat(dirfd, rewritten, argv, envp, flags);
+        return real(dirfd, rewritten, argv, envp, flags);
     }
 
-    return real_execveat(dirfd, pathname, argv, envp, flags);
+    return real(dirfd, pathname, argv, envp, flags);
 }
 
 /* --- Intercepted functions --- */
