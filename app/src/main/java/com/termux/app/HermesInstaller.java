@@ -1091,6 +1091,14 @@ public class HermesInstaller {
             throw new Exception("libpath_rewrite.so not found in " + nativeLibDir);
         }
 
+        // Skip if destination already exists with same size — avoid overwriting
+        // a library that may be mmap'd by running terminal processes via LD_PRELOAD.
+        // In-place overwrite invalidates mmap pages and causes SIGSEGV.
+        if (dstFile.exists() && dstFile.length() == srcFile.length()) {
+            Logger.logInfo(LOG_TAG, "libpath_rewrite.so already deployed (" + dstFile.length() + " bytes), skipping");
+            return;
+        }
+
         File libDir = new File(TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
         if (!libDir.exists() && !libDir.mkdirs()) {
             throw new Exception("Failed to create " + libDir.getAbsolutePath());
