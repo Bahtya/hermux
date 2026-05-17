@@ -57,7 +57,7 @@ public class HermesInstaller {
     private static final String HERMES_BASH_INIT_VERSION = "2";
     private static final String HERMES_APT_CONF_VERSION = "4";
     private static final String HERMES_DPKG_CONF_VERSION = "1";
-    private static final String HERMES_SHELL_PROFILE_VERSION = "1";
+    private static final String HERMES_SHELL_PROFILE_VERSION = "2";
     private static final String HERMES_PATH_REWRITE_VERSION = "4";
     private static final String HERMES_SYMLINK_FIX_VERSION = "2";
     private static final String HERMES_DPKG_DB_FIX_VERSION = "2";
@@ -1056,10 +1056,6 @@ public class HermesInstaller {
                 + "export USER=hermes\n"
                 + "export LOGNAME=hermes\n"
                 + "\n"
-                + "# Ensure path rewrite is always active\n"
-                + "if [ -z \"$LD_PRELOAD\" ] && [ -f \"$PREFIX/lib/libpath_rewrite.so\" ]; then\n"
-                + "    export LD_PRELOAD=\"$PREFIX/lib/libpath_rewrite.so\"\n"
-                + "fi\n"
                 + "export PS1='\\[\\e[1;32m\\]hermes@hermes\\[\\e[0m\\]:\\[\\e[1;34m\\]\\w\\[\\e[0m\\]\\$ '\n";
 
         if (bashrc.exists()) {
@@ -1093,6 +1089,14 @@ public class HermesInstaller {
 
         if (!srcFile.exists()) {
             throw new Exception("libpath_rewrite.so not found in " + nativeLibDir);
+        }
+
+        // Skip if destination already exists with same size — avoid overwriting
+        // a library that may be mmap'd by running terminal processes via LD_PRELOAD.
+        // In-place overwrite invalidates mmap pages and causes SIGSEGV.
+        if (dstFile.exists() && dstFile.length() == srcFile.length()) {
+            Logger.logInfo(LOG_TAG, "libpath_rewrite.so already deployed (" + dstFile.length() + " bytes), skipping");
+            return;
         }
 
         File libDir = new File(TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
