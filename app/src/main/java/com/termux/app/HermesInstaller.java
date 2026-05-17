@@ -61,7 +61,7 @@ public class HermesInstaller {
     private static final String HERMES_PATH_REWRITE_VERSION = "4";
     private static final String HERMES_SYMLINK_FIX_VERSION = "2";
     private static final String HERMES_DPKG_DB_FIX_VERSION = "2";
-    private static final String HERMES_SSH_SETUP_VERSION = "3";
+    private static final String HERMES_SSH_SETUP_VERSION = "4";
 
     private static final String SSH_BOOT_SCRIPT =
             TermuxConstants.TERMUX_BOOT_SCRIPTS_DIR_PATH + "/hermes-sshd";
@@ -191,9 +191,6 @@ public class HermesInstaller {
         runMigration("Shell profile", HERMES_SHELL_PROFILE_VERSION,
                 HERMES_SHELL_PROFILE_MARKER_FILE, HermesInstaller::deployShellProfile,
                 TermuxConstants.TERMUX_HOME_DIR_PATH + "/.bashrc");
-        runMigration("SSH setup", HERMES_SSH_SETUP_VERSION,
-                HERMES_SSH_SETUP_MARKER_FILE, HermesInstaller::deploySshConfig,
-                SSHD_CONFIG_PATH, true);
     }
 
     /**
@@ -201,9 +198,13 @@ public class HermesInstaller {
      * Called from TermuxApplication.onCreate() after runUpgradeMigrations().
      */
     static void runContextMigrations(Context context) {
+        String nativeLibDir = context.getApplicationInfo().nativeLibraryDir;
         runMigration("Path rewrite", HERMES_PATH_REWRITE_VERSION,
                 HERMES_PATH_REWRITE_MARKER_FILE, () -> deployPathRewrite(context),
                 TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH + "/libpath_rewrite.so");
+        runMigration("SSH setup", HERMES_SSH_SETUP_VERSION,
+                HERMES_SSH_SETUP_MARKER_FILE, () -> deploySshConfig(nativeLibDir),
+                SSHD_CONFIG_PATH, true);
     }
 
     private static void runMigration(String name, String version,
@@ -852,11 +853,11 @@ public class HermesInstaller {
     }
 
     /**
-     * Fast config-only SSH migration. Called from runUpgradeMigrations() on main thread.
+     * Fast config-only SSH migration. Called from runContextMigrations() on main thread.
      * Only deploys config files (sshd_config, passwd entry, boot script).
      * Skips if sshd binary is not installed (will be picked up by background setup).
      */
-    private static void deploySshConfig() throws Exception {
+    private static void deploySshConfig(String nativeLibDir) throws Exception {
         File sshd = new File(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH, "sshd");
         if (!sshd.exists()) {
             Logger.logInfo(LOG_TAG, "SSH config: sshd not found, skipping");
@@ -864,7 +865,7 @@ public class HermesInstaller {
         }
         deploySshdConfig();
         deploySshPassword();
-        deploySshBootScript();
+        deploySshBootScript(nativeLibDir);
         Logger.logInfo(LOG_TAG, "SSH config deployed (migration)");
     }
 
@@ -873,9 +874,10 @@ public class HermesInstaller {
      * deploys config, sets password, and starts sshd.
      */
     static void setupSshInBackground(Context context) {
+        String nativeLibDir = context.getApplicationInfo().nativeLibraryDir;
         new Thread(() -> {
             try {
-                setupSshInternal();
+                setupSshInternal(nativeLibDir);
             } catch (Exception e) {
                 Logger.logErrorExtended(LOG_TAG, "SSH background setup failed: " + e.getMessage());
             }
@@ -895,7 +897,7 @@ public class HermesInstaller {
         }
     }
 
-    private static void setupSshInternal() throws Exception {
+    private static void setupSshInternal(String nativeLibDir) throws Exception {
         String prefix = TermuxConstants.TERMUX_PREFIX_DIR_PATH;
         File sshd = new File(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH, "sshd");
 
@@ -921,7 +923,7 @@ public class HermesInstaller {
 
         deploySshdConfig();
         deploySshPassword();
-        deploySshBootScript();
+        deploySshBootScript(nativeLibDir);
 
         // Start sshd if not already running
         try {
@@ -1022,17 +1024,18 @@ public class HermesInstaller {
         Logger.logInfo(LOG_TAG, "SSH password configured for user " + user);
     }
 
-    private static void deploySshBootScript() throws Exception {
+    private static void deploySshBootScript(String nativeLibDir) throws Exception {
         File bootDir = TermuxConstants.TERMUX_BOOT_SCRIPTS_DIR;
         FileUtils.createDirectoryFile(bootDir.getAbsolutePath());
-        String prefix = TermuxConstants.TERMUX_PREFIX_DIR_PATH;
+
+        String pathRewriteLib = nativeLibDir + "/libpath_rewrite.so";
 
         String script = "#!" + TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/sh\n"
                 + "# Auto-start SSH daemon on boot\n"
                 + "if [ -f " + TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/sshd ]; then\n"
                 + "    export LD_LIBRARY_PATH=" + TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH + "\n"
-                + "    if [ -f " + prefix + "/lib/libpath_rewrite.so ]; then\n"
-                + "        export LD_PRELOAD=" + prefix + "/lib/libpath_rewrite.so\n"
+                + "    if [ -f " + pathRewriteLib + " ]; then\n"
+                + "        export LD_PRELOAD=" + pathRewriteLib + "\n"
                 + "    fi\n"
                 + "    " + TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/sshd\n"
                 + "fi\n";
