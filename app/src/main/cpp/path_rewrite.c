@@ -612,3 +612,34 @@ int euidaccess(const char *p, int m) {
     if (!real) return -1;
     return real(rewrite(p), m);
 }
+
+/* --- Diagnostics --- */
+
+static void write_diag(const char *msg) {
+    int fd = open("/sdcard/hermux-pathrewrite.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
+    if (fd >= 0) {
+        write(fd, msg, strlen(msg));
+        close(fd);
+    }
+}
+
+__attribute__((constructor))
+static void pathrewrite_init(void) {
+    char buf[512];
+    int len;
+
+    /* Test that dlsym works */
+    void *real_open = dlsym(RTLD_NEXT, "open");
+    void *real_stat = dlsym(RTLD_NEXT, "stat");
+
+    len = snprintf(buf, sizeof(buf),
+        "path_rewrite loaded: dlsym(open)=%p dlsym(stat)=%p\n",
+        real_open, real_stat);
+    write_diag(buf);
+
+    /* Test TLS buffer access */
+    const char *test = rewrite("/data/data/com.termux/files/usr/bin/bash");
+    len = snprintf(buf, sizeof(buf),
+        "TLS test: rewrite result=%s\n", test ? test : "(null)");
+    write_diag(buf);
+}

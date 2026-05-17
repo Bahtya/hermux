@@ -418,6 +418,27 @@ public final class TerminalSession extends TerminalOutput {
                         }
                         if (exitCode == -11 && uptimeMs < 5000) {
                             Log.e(LOG_TAG, "Signal 11 within " + uptimeMs + "ms — likely LD_PRELOAD crash");
+                            // Write detailed diagnostics to /sdcard/
+                            try {
+                                StringBuilder diag = new StringBuilder();
+                                diag.append(java.time.Instant.now()).append(" SIGSEGV uptime=").append(uptimeMs).append("ms\n");
+                                diag.append("  shell=").append(mShellPath).append("\n");
+                                diag.append("  LD_PRELOAD=").append(ldPreload).append("\n");
+                                // Check if libpath_rewrite.so exists
+                                File rwLib = new File("/data/data/com.hermux/files/usr/lib/libpath_rewrite.so");
+                                diag.append("  libpath_rewrite.so exists=").append(rwLib.exists());
+                                if (rwLib.exists()) diag.append(" size=").append(rwLib.length());
+                                diag.append("\n");
+                                // Log all LD_* and PREFIX env vars
+                                for (String env : mEnv) {
+                                    if (env != null && (env.startsWith("LD_") || env.startsWith("PREFIX=") || env.startsWith("HOME=")))
+                                        diag.append("  env: ").append(env).append("\n");
+                                }
+                                diag.append("\n");
+                                java.io.FileWriter fw = new java.io.FileWriter("/sdcard/hermux-debug.log", true);
+                                fw.write(diag.toString());
+                                fw.close();
+                            } catch (Exception ignored) {}
                         }
                     } else {
                         Log.d(LOG_TAG, "Process exited (" + signalInfo + "), shell=" + mShellPath

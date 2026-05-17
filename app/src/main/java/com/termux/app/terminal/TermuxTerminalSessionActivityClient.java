@@ -139,19 +139,6 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
 
     @Override
     public void onSessionFinished(@NonNull TerminalSession finishedSession) {
-        // Diagnostic: write session exit info to /sdcard/ for post-crash analysis
-        try {
-            long uptimeMs = System.currentTimeMillis() - finishedSession.getCreateTimeMs();
-            int exitStatus = finishedSession.getExitStatus();
-            String line = java.time.Instant.now() + " session_finished exit=" + exitStatus
-                + " uptime=" + uptimeMs + "ms"
-                + " name=" + finishedSession.mSessionName + "\n";
-            try (java.io.FileWriter fw = new java.io.FileWriter(
-                    "/sdcard/hermux-debug.log", true)) {
-                fw.write(line);
-            }
-        } catch (Exception ignored) {}
-
         TermuxService service = mActivity.getTermuxService();
 
         if (service == null || service.wantsToStop()) {
@@ -221,19 +208,6 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
                 Logger.logWarn(LOG_TAG, "Terminal crashed with signal 11 after " + uptimeMs
                     + "ms, disabling LD_PRELOAD and restarting session");
                 TermuxShellEnvironment.reportTerminalSignal11();
-                addNewSession(false, null);
-                removeFinishedSession(finishedSession);
-            }
-        }
-
-        // Auto-recover from Signal 9 (SIGKILL), typically caused by the OOM
-        // killer or by deployPathRewrite() overwriting libpath_rewrite.so while
-        // the terminal's bash has it loaded via LD_PRELOAD.
-        if (exitCode == -9) {
-            long uptimeMs = System.currentTimeMillis() - finishedSession.getCreateTimeMs();
-            if (uptimeMs < 10_000) {
-                Logger.logWarn(LOG_TAG, "Terminal killed with signal 9 after " + uptimeMs
-                    + "ms, restarting session");
                 addNewSession(false, null);
                 removeFinishedSession(finishedSession);
             }
@@ -430,16 +404,6 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         TermuxService service = mActivity.getTermuxService();
         if (service == null) return;
 
-        // Diagnostic log
-        try {
-            java.io.File diagDir = new java.io.File(TermuxConstants.TERMUX_HOME_DIR_PATH, ".hermes");
-            try (java.io.FileWriter fw = new java.io.FileWriter(
-                    "/sdcard/hermux-debug.log", true)) {
-                fw.write(java.time.Instant.now() + " addNewSession failsafe=" + isFailSafe
-                    + " name=" + sessionName + " sessions=" + service.getTermuxSessionsSize() + "\n");
-            }
-        } catch (Exception ignored) {}
-
         if (service.getTermuxSessionsSize() >= MAX_SESSIONS) {
             new AlertDialog.Builder(mActivity).setTitle(R.string.title_max_terminals_reached).setMessage(R.string.msg_max_terminals_reached)
                 .setPositiveButton(android.R.string.ok, null).show();
@@ -509,16 +473,6 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         // Return pressed with finished session - remove it.
         TermuxService service = mActivity.getTermuxService();
         if (service == null) return;
-
-        // Diagnostic log
-        try {
-            long uptimeMs = System.currentTimeMillis() - finishedSession.getCreateTimeMs();
-            try (java.io.FileWriter fw = new java.io.FileWriter(
-                    "/sdcard/hermux-debug.log", true)) {
-                fw.write(java.time.Instant.now() + " removeFinishedSession exit=" + finishedSession.getExitStatus()
-                    + " uptime=" + uptimeMs + "ms sessionsBefore=" + service.getTermuxSessionsSize() + "\n");
-            }
-        } catch (Exception ignored) {}
 
         int index = service.removeTermuxSession(finishedSession);
 
