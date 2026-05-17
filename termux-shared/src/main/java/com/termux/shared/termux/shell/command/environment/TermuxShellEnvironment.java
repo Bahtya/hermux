@@ -138,9 +138,13 @@ public class TermuxShellEnvironment extends AndroidShellEnvironment {
             // Set LD_PRELOAD to load the path rewrite library. This intercepts all
             // filesystem calls and rewrites /data/data/com.termux/ to the correct path,
             // fixing ALL binaries with compiled-in old paths (dpkg, apt, bash, etc.).
+            // Use the APK's nativeLibraryDir which is on the linker's allowed search path.
+            // The app data directory ($PREFIX/lib) is NOT allowed for LD_PRELOAD on
+            // Android 10+ due to linker namespace restrictions.
             // Skip if terminal has crashed with signal 11 to allow recovery.
             if (!isPathRewriteDisabled()) {
-                String pathRewriteLib = TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH + "/libpath_rewrite.so";
+                String pathRewriteLib = currentPackageContext.getApplicationInfo().nativeLibraryDir
+                        + "/libpath_rewrite.so";
                 if (new java.io.File(pathRewriteLib).exists()) {
                     environment.put("LD_PRELOAD", pathRewriteLib);
                 }
