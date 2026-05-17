@@ -205,11 +205,19 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         if (exitCode == -11) {
             long uptimeMs = System.currentTimeMillis() - finishedSession.getCreateTimeMs();
             if (uptimeMs < 5000) {
-                Logger.logWarn(LOG_TAG, "Terminal crashed with signal 11 after " + uptimeMs
-                    + "ms, disabling LD_PRELOAD and restarting session");
                 TermuxShellEnvironment.reportTerminalSignal11();
-                addNewSession(false, null);
-                removeFinishedSession(finishedSession);
+                int crashCount = TermuxShellEnvironment.getSignal11CrashCount();
+                if (crashCount <= 2) {
+                    // Use failsafe=true to avoid loading bash or LD_PRELOAD —
+                    // previous recovery used failsafe=false which kept crashing.
+                    Logger.logWarn(LOG_TAG, "Terminal crashed with signal 11 after " + uptimeMs
+                        + "ms (crash #" + crashCount + "), starting failsafe session");
+                    addNewSession(true, null);
+                    removeFinishedSession(finishedSession);
+                } else {
+                    Logger.logWarn(LOG_TAG, "Terminal signal 11 crash loop detected (" + crashCount
+                        + " crashes), stopping auto-recovery — keeping session visible");
+                }
             }
         }
     }

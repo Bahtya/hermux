@@ -49,6 +49,10 @@ public class TermuxShellEnvironment extends AndroidShellEnvironment {
         return sSignal11CrashCount >= 1;
     }
 
+    public static int getSignal11CrashCount() {
+        return sSignal11CrashCount;
+    }
+
     /** Environment variable for the termux {@link TermuxConstants#TERMUX_PREFIX_DIR_PATH}. */
     public static final String ENV_PREFIX = "PREFIX";
 
