@@ -201,8 +201,24 @@ def main():
             f")\" 2>&1",
         )
 
-        # Step 8: Pack and download
-        print("\n=== Step 8: Pack venv ===")
+        # Step 8: Fix com.termux → com.hermux paths before packing
+        print("\n=== Step 8: Fix paths com.termux → com.hermux ===")
+        ssh_exec(
+            ssh,
+            f"{env} && "
+            # Fix symlinks pointing to com.termux absolute paths
+            + f"find '{EXPANDED_VENV_DIR}' -type l -exec sh -c "
+            + r"""'readlink "$1" | grep -q com.termux && { tgt=$(readlink "$1" | sed "s|com.termux|com.hermux|g"); rm "$1"; ln -sf "$tgt" "$1"; }' _ {} \; && """
+            # Fix com.termux → com.hermux in text files (skip binary files)
+            + f"find '{EXPANDED_VENV_DIR}' -type f "
+            + r"\( -name '*.pyc' -o -name '*.pyo' -o -name '*.so' -o -name '*.a' -o -name '*.opt-*' \) -prune -o "
+            + "-type f -exec grep -l 'com\\.termux' {} + 2>/dev/null | "
+            + r"while IFS= read -r f; do sed -i 's|/data/data/com\.termux|/data/data/com.hermux|g' \"$f\"; done",
+            timeout=300,
+        )
+
+        # Step 9: Pack and download
+        print("\n=== Step 9: Pack venv ===")
         remote_tar = "$HOME/venv-aarch64.tar.gz"
         ssh_exec(ssh, f"{env} && rm -f {remote_tar} && cd {HERMES_DIR} && tar czf {remote_tar} venv/ && ls -lh {remote_tar}")
 

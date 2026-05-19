@@ -97,13 +97,6 @@ public class VenvExtractor {
             "cd \"" + hermesDir + "\" && "
             + "tar xzf \"" + tmpFile + "\" && "
             + "rm -f \"" + tmpFile + "\" && "
-            // Fix symlinks pointing to com.termux absolute paths
-            + "find \"" + venvDir + "\" -type l -exec sh -c "
-            + "'readlink \"$1\" | grep -q com.termux && { tgt=$(readlink \"$1\" | sed \"s|com.termux|com.hermux|g\"); rm \"$1\"; ln -sf \"$tgt\" \"$1\"; }' _ {} \\; && "
-            // Fix com.termux → com.hermux paths in all text files
-            + "find \"" + venvDir + "\" -type f -exec grep -l 'com\\.termux' {} + 2>/dev/null | "
-            + "  while IFS= read -r f; do sed -i 's|/data/data/com\\.termux|/data/data/com.hermux|g' \"$f\"; done && "
-            // Set execute permissions on bin/*
             + "chmod 755 \"" + venvDir + "/bin/\"* 2>/dev/null; "
             + "echo 'venv extraction complete'";
 
