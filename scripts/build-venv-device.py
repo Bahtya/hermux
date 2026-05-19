@@ -217,10 +217,21 @@ def main():
             timeout=300,
         )
 
+        # Step 8b: Normalize permissions and ownership
+        print("\n=== Step 8b: Normalize permissions ===")
+        ssh_exec(
+            ssh,
+            f"{env} && "
+            + f"find '{EXPANDED_VENV_DIR}' -type d -exec chmod 755 {{}} \\; && "
+            + f"find '{EXPANDED_VENV_DIR}' -type f -exec chmod 644 {{}} \\; && "
+            + f"chmod 755 '{EXPANDED_VENV_DIR}/bin/'*",
+            timeout=60,
+        )
+
         # Step 9: Pack and download
         print("\n=== Step 9: Pack venv ===")
         remote_tar = "$HOME/venv-aarch64.tar.gz"
-        ssh_exec(ssh, f"{env} && rm -f {remote_tar} && cd {HERMES_DIR} && tar czf {remote_tar} venv/ && ls -lh {remote_tar}")
+        ssh_exec(ssh, f"{env} && rm -f {remote_tar} && cd {HERMES_DIR} && tar czf {remote_tar} --owner=0 --group=0 --numeric-owner venv/ && ls -lh {remote_tar}")
 
         print(f"\n=== Downloading via SFTP to {args.output} ===")
         sftp = ssh.open_sftp()
