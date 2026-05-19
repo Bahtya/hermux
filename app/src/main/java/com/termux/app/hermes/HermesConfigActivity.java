@@ -2213,25 +2213,24 @@ public class HermesConfigActivity extends AppCompatActivity {
                         }
                     }
 
-                    // Deploy sshd_config if missing (after openssh install)
+                    // Always redeploy sshd_config after install to ensure correct paths
                     String pathRewriteLib = TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH + "/libpath_rewrite.so";
-                    File sshdConfig = new File(prefix, "etc/ssh/sshd_config");
-                    if (!sshdConfig.exists()) {
-                        diag.append("sshd_config missing, deploying default config…\n");
-                        String setEnv = new File(pathRewriteLib).exists()
-                                ? "SetEnv LD_PRELOAD=" + pathRewriteLib : "";
-                        String cfgDeploy = runPkgCommand(bashPath, prefix,
-                                "mkdir -p " + prefix + "/etc/ssh && "
-                                + "printf 'Port 8022\\nPasswordAuthentication yes\\nPrintMotd yes\\n"
-                                + setEnv + "\\n"
-                                + "Subsystem sftp " + prefix + "/libexec/sftp-server\\n' > "
-                                + prefix + "/etc/ssh/sshd_config 2>&1 && echo __CFG_OK__", 10_000);
-                        if (!cfgDeploy.contains("__CFG_OK__")) {
-                            diag.append(cfgDeploy).append("\n");
-                        }
-                    }
+                    String setEnv = new File(pathRewriteLib).exists()
+                            ? "SetEnv LD_PRELOAD=" + pathRewriteLib : "";
+                    runPkgCommand(bashPath, prefix,
+                            "mkdir -p " + prefix + "/etc/ssh && "
+                            + "printf 'Port 8022\\nPasswordAuthentication yes\\nPrintMotd yes\\n"
+                            + setEnv + "\\n"
+                            + "Subsystem sftp " + prefix + "/libexec/sftp-server\\n' > "
+                            + prefix + "/etc/ssh/sshd_config 2>&1", 10_000);
 
-                    // Auto-generate host keys if missing
+                    // Force generate host keys (ssh-keygen -A won't overwrite existing)
+                    runPkgCommand(bashPath, prefix,
+                            TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/ssh-keygen -A 2>&1", 30_000);
+                    runPkgCommand(bashPath, prefix,
+                            "chmod 600 " + prefix + "/etc/ssh/ssh_host_*_key 2>/dev/null", 5_000);
+
+                    // Verify host keys actually exist before attempting sshd start
                     File sshDir = new File(prefix, "etc/ssh");
                     boolean hasHostKey = false;
                     if (sshDir.isDirectory()) {
@@ -2239,12 +2238,9 @@ public class HermesConfigActivity extends AppCompatActivity {
                         hasHostKey = keys != null && keys.length > 0;
                     }
                     if (!hasHostKey) {
-                        diag.append("Host keys missing, generating…\n");
-                        String kgOutput = runPkgCommand(bashPath, prefix,
-                                TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/ssh-keygen -A 2>&1", 30_000);
-                        diag.append(truncateOutput(kgOutput, 10)).append("\n");
-                        runPkgCommand(bashPath, prefix,
-                                "chmod 600 " + prefix + "/etc/ssh/ssh_host_*_key 2>/dev/null", 5_000);
+                        diag.append("Host key generation failed — no keys found in ").append(sshDir);
+                        showErrorDialog(diag.toString());
+                        return;
                     }
 
                     ProcessBuilder pb = new ProcessBuilder(bashPath, "-c",
