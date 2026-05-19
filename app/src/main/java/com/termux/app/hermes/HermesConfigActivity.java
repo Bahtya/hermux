@@ -2208,7 +2208,26 @@ public class HermesConfigActivity extends AppCompatActivity {
                         hasHostKey = keys != null && keys.length > 0;
                     }
                     if (!hasHostKey) {
-                        diag.append("SSH host key not found — run ssh-keygen -A first\n");
+                        // Auto-generate host keys
+                        try {
+                            ProcessBuilder kgPb = new ProcessBuilder(bashPath, "-c",
+                                    TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/ssh-keygen -A 2>&1");
+                            kgPb.environment().put("HOME", TermuxConstants.TERMUX_HOME_DIR_PATH);
+                            kgPb.environment().put("PREFIX", prefix);
+                            kgPb.environment().put("LD_LIBRARY_PATH", TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
+                            String pathRewriteKg = TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH + "/libpath_rewrite.so";
+                            if (new File(pathRewriteKg).exists()) {
+                                kgPb.environment().put("LD_PRELOAD", pathRewriteKg);
+                            }
+                            kgPb.redirectErrorStream(true);
+                            Process kgP = kgPb.start();
+                            java.io.BufferedReader kgReader = new java.io.BufferedReader(
+                                    new java.io.InputStreamReader(kgP.getInputStream()));
+                            while (kgReader.readLine() != null) {}
+                            kgP.waitFor();
+                        } catch (Exception kgEx) {
+                            diag.append("ssh-keygen -A failed: ").append(kgEx.getMessage()).append("\n");
+                        }
                     }
 
                     ProcessBuilder pb = new ProcessBuilder(bashPath, "-c",

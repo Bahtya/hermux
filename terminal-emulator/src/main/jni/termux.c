@@ -125,9 +125,11 @@ typedef uint32_t (*vproc_create_process_fn)(
     const char* path, char* const argv[], char* const envp[],
     int stdin_fd, int stdout_fd, int stderr_fd);
 typedef int (*vproc_run_until_exit_fn)(uint32_t vpid);
+typedef int (*vproc_vpid_exists_fn)(uint32_t vpid);
 
 static vproc_create_process_fn g_vproc_create_process = NULL;
 static vproc_run_until_exit_fn g_vproc_run_until_exit = NULL;
+static vproc_vpid_exists_fn g_vproc_vpid_exists = NULL;
 static atomic_int g_vproc_initialized = ATOMIC_VAR_INIT(0);
 
 static void vproc_ensure_loaded(void) {
@@ -141,10 +143,12 @@ static void vproc_ensure_loaded(void) {
     }
     g_vproc_create_process = (vproc_create_process_fn)dlsym(lib, "vproc_ffi_create_process");
     g_vproc_run_until_exit = (vproc_run_until_exit_fn)dlsym(lib, "vproc_ffi_run_until_exit");
-    if (!g_vproc_create_process || !g_vproc_run_until_exit) {
+    g_vproc_vpid_exists = (vproc_vpid_exists_fn)dlsym(lib, "vproc_ffi_vpid_exists");
+    if (!g_vproc_create_process || !g_vproc_run_until_exit || !g_vproc_vpid_exists) {
         fprintf(stderr, "[vproc] dlsym failed: %s\n", dlerror());
         g_vproc_create_process = NULL;
         g_vproc_run_until_exit = NULL;
+        g_vproc_vpid_exists = NULL;
     }
 }
 
@@ -300,9 +304,9 @@ JNIEXPORT void JNICALL Java_com_termux_terminal_JNI_setPtyUTF8Mode(JNIEnv* TERMU
 
 JNIEXPORT jint JNICALL Java_com_termux_terminal_JNI_waitFor(JNIEnv* TERMUX_UNUSED(env), jclass TERMUX_UNUSED(clazz), jint pid)
 {
-    // Try vproc for virtual pids
+    // Try vproc — only if vpid exists to avoid collision with real PIDs
     vproc_ensure_loaded();
-    if (g_vproc_run_until_exit && pid > 0) {
+    if (g_vproc_vpid_exists && g_vproc_run_until_exit && g_vproc_vpid_exists((uint32_t)pid)) {
         int code = g_vproc_run_until_exit((uint32_t)pid);
         if (code >= 0) return code;
     }
