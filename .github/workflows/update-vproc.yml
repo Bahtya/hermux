@@ -1,0 +1,74 @@
+name: Update vproc
+
+on:
+  repository_dispatch:
+    types: [vproc-release]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'vproc version tag (e.g. v0.2.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-vproc
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            VERSION="${{ github.event.client_payload.version }}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          if [ -z "$VERSION" ]; then
+            echo "::error::No version specified"
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download libvproc.so
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          URL="https://github.com/Bahtya/vproc/releases/download/${VERSION}/vproc-${VERSION}-aarch64-linux-android.tar.gz"
+          echo "Downloading $URL"
+          mkdir -p terminal-emulator/src/main/jni/libs/arm64-v8a
+          curl -fSL -o vproc.tar.gz "$URL"
+          tar xzf vproc.tar.gz
+          mv libvproc.so terminal-emulator/src/main/jni/libs/arm64-v8a/
+          rm vproc.tar.gz
+          SIZE=$(stat -c%s terminal-emulator/src/main/jni/libs/arm64-v8a/libvproc.so)
+          if [ "$SIZE" -lt 10000 ]; then
+            echo "::error::libvproc.so too small (${SIZE} bytes), likely corrupted"
+            exit 1
+          fi
+          echo "libvproc.so: ${SIZE} bytes"
+
+      - name: Update gradle.properties
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          sed -i "s/^vprocVersion=.*/vprocVersion=${VERSION}/" gradle.properties
+          echo "Updated vprocVersion to ${VERSION}"
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add terminal-emulator/src/main/jni/libs/arm64-v8a/libvproc.so gradle.properties
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: update libvproc.so to ${{ steps.ver.outputs.version }}"
+            git push
+            echo "Committed libvproc.so update for vproc ${{ steps.ver.outputs.version }}"
+          fi
