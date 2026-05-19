@@ -141,7 +141,7 @@ public class GatewayLogActivity extends AppCompatActivity {
             mTabSsh.setTextColor(tabInactiveText);
             mTabSsh.setBackgroundColor(tabInactiveBg);
             loadLog();
-            if (mCurrentTab.equals("gateway")) loadSessionHistory();
+            loadSessionHistory();
             startFileObserver();
         });
 
@@ -440,14 +440,18 @@ public class GatewayLogActivity extends AppCompatActivity {
                         "-s", "sshd:*", "Sshd:*", "HermesInstaller:*", "GatewayControl:*");
                 pb.redirectErrorStream(true);
                 Process p = pb.start();
-                BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    log.append(line).append("\n");
+                try {
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        log.append(line).append("\n");
+                    }
+                    p.waitFor();
+                } finally {
+                    p.destroy();
                 }
-                p.waitFor();
             } catch (Exception e) {
-                log.append("Error reading SSH log: ").append(e.getMessage());
+                log.append(getString(R.string.ssh_log_read_error, e.getMessage()));
             }
             mFullLogContent = log.toString();
             runOnUiThread(() -> {
@@ -462,7 +466,7 @@ public class GatewayLogActivity extends AppCompatActivity {
     private void applyFilter() {
         if (mFullLogContent.isEmpty()) {
             if ("ssh".equals(mCurrentTab)) {
-                mLogText.setText("No SSH log entries found.\n\nSSH logs are captured from logcat (tags: sshd, HermesInstaller, GatewayControl).");
+                mLogText.setText(getString(R.string.ssh_log_empty));
             } else if (!HermesGatewayService.isRunning()) {
                 mLogText.setText(getString(R.string.gateway_log_not_running_hint));
             } else {

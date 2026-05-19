@@ -1523,6 +1523,9 @@
     <string name="ssh_info_summary">View SSH connection details</string>
     <string name="ssh_info_dialog_title">SSH Connection Info</string>
     <string name="ssh_info_dialog_message">Connect via:\n\nssh -p %1$d %2$s@&lt;device-ip&gt;\n\nDefault password: hermes</string>
+    <string name="ssh_log_empty">No SSH log entries found.\n\nSSH logs are captured from logcat (tags: sshd, HermesInstaller, GatewayControl).</string>
+    <string name="ssh_log_read_error">Error reading SSH log: %1$s</string>
+    <string name="ssh_no_output_hint">sshd failed with no output (check logcat for details)</string>
 
     <!-- App Update -->
     <string name="update_checking">Checking for updates…</string>

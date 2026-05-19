@@ -2228,13 +2228,17 @@ public class HermesConfigActivity extends AppCompatActivity {
                     Process p = pb.start();
 
                     StringBuilder output = new StringBuilder();
-                    java.io.BufferedReader reader = new java.io.BufferedReader(
-                            new java.io.InputStreamReader(p.getInputStream()));
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        output.append(line).append("\n");
+                    try {
+                        java.io.BufferedReader reader = new java.io.BufferedReader(
+                                new java.io.InputStreamReader(p.getInputStream()));
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            output.append(line).append("\n");
+                        }
+                        p.waitFor();
+                    } finally {
+                        p.destroy();
                     }
-                    p.waitFor();
 
                     String outputStr = output.toString().trim();
                     boolean success = outputStr.endsWith("__OK__");
@@ -2260,7 +2264,7 @@ public class HermesConfigActivity extends AppCompatActivity {
                                     errorMsg = finalDiag + "\n\n" + errorMsg;
                                 }
                                 if (errorMsg.trim().isEmpty()) {
-                                    errorMsg = "sshd failed with no output (check logcat for details)";
+                                    errorMsg = getString(R.string.ssh_no_output_hint);
                                 }
                                 new AlertDialog.Builder(requireContext())
                                         .setTitle(R.string.ssh_start_failed)
