@@ -2190,37 +2190,97 @@ public class HermesConfigActivity extends AppCompatActivity {
                 try {
                     String bashPath = TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/bash";
                     String sshdPath = TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/sshd";
+                    String prefix = TermuxConstants.TERMUX_PREFIX_DIR_PATH;
+
+                    // Collect prerequisite diagnostics
+                    StringBuilder diag = new StringBuilder();
+                    if (!new File(sshdPath).exists()) {
+                        diag.append("sshd binary not found at ").append(sshdPath).append("\n");
+                    }
+                    File sshdConfig = new File(prefix, "etc/ssh/sshd_config");
+                    if (!sshdConfig.exists()) {
+                        diag.append("sshd_config not found at ").append(sshdConfig.getAbsolutePath()).append("\n");
+                    }
+                    boolean hasHostKey = false;
+                    File sshDir = new File(prefix, "etc/ssh");
+                    if (sshDir.isDirectory()) {
+                        File[] keys = sshDir.listFiles((d, n) -> n.startsWith("ssh_host_") && n.endsWith("_key"));
+                        hasHostKey = keys != null && keys.length > 0;
+                    }
+                    if (!hasHostKey) {
+                        diag.append("SSH host key not found — run ssh-keygen -A first\n");
+                    }
+
                     ProcessBuilder pb = new ProcessBuilder(bashPath, "-c",
-                            sshdPath + " 2>&1; pgrep -x sshd >/dev/null 2>&1 && echo ok || echo fail");
+                            sshdPath + " 2>&1; pgrep -x sshd >/dev/null 2>&1 && echo __OK__ || echo __FAIL__");
                     pb.environment().put("HOME", TermuxConstants.TERMUX_HOME_DIR_PATH);
                     pb.environment().put("PATH", TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + ":/system/bin");
-                    pb.environment().put("PREFIX", TermuxConstants.TERMUX_PREFIX_DIR_PATH);
+                    pb.environment().put("PREFIX", prefix);
+                    pb.environment().put("TMPDIR", TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH);
                     pb.environment().put("LD_LIBRARY_PATH", TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
+                    pb.environment().put("TERMUX_VERSION", com.termux.BuildConfig.VERSION_NAME);
+                    pb.environment().put("TERMINFO", prefix + "/share/terminfo");
                     String pathRewrite = TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH + "/libpath_rewrite.so";
                     if (new File(pathRewrite).exists()) {
                         pb.environment().put("LD_PRELOAD", pathRewrite);
                     }
                     pb.redirectErrorStream(true);
                     Process p = pb.start();
-                    java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream()));
-                    String lastLine = null;
+
+                    StringBuilder output = new StringBuilder();
+                    java.io.BufferedReader reader = new java.io.BufferedReader(
+                            new java.io.InputStreamReader(p.getInputStream()));
                     String line;
-                    while ((line = reader.readLine()) != null) lastLine = line;
+                    while ((line = reader.readLine()) != null) {
+                        output.append(line).append("\n");
+                    }
                     p.waitFor();
 
-                    boolean success = "ok".equals(lastLine);
+                    String outputStr = output.toString().trim();
+                    boolean success = outputStr.endsWith("__OK__");
+                    // Strip status markers from display output
+                    String cleanOutput = outputStr.replace("__OK__", "").replace("__FAIL__", "").trim();
+
+                    if (!success) {
+                        String logMsg = "sshd start failed. Output: " + cleanOutput;
+                        String diagStr = diag.toString().trim();
+                        if (!diagStr.isEmpty()) logMsg += "\nDiagnostics:\n" + diagStr;
+                        com.termux.shared.logger.Logger.logErrorExtended("GatewayControl", logMsg);
+                    }
+
                     if (getActivity() != null) {
+                        String finalDiag = diag.toString().trim();
+                        String finalOutput = cleanOutput;
                         getActivity().runOnUiThread(() -> {
-                            Toast.makeText(requireContext(),
-                                    success ? R.string.ssh_started : R.string.ssh_start_failed,
-                                    Toast.LENGTH_SHORT).show();
+                            if (success) {
+                                Toast.makeText(requireContext(), R.string.ssh_started, Toast.LENGTH_SHORT).show();
+                            } else {
+                                String errorMsg = finalOutput;
+                                if (!finalDiag.isEmpty()) {
+                                    errorMsg = finalDiag + "\n\n" + errorMsg;
+                                }
+                                if (errorMsg.trim().isEmpty()) {
+                                    errorMsg = "sshd failed with no output (check logcat for details)";
+                                }
+                                new AlertDialog.Builder(requireContext())
+                                        .setTitle(R.string.ssh_start_failed)
+                                        .setMessage(errorMsg)
+                                        .setPositiveButton(android.R.string.ok, null)
+                                        .show();
+                            }
                             updateSshStatus();
                         });
                     }
                 } catch (Exception e) {
+                    com.termux.shared.logger.Logger.logErrorExtended("GatewayControl",
+                            "startSshd exception: " + e.getMessage());
                     if (getActivity() != null) {
                         getActivity().runOnUiThread(() -> {
-                            Toast.makeText(requireContext(), R.string.ssh_start_failed, Toast.LENGTH_SHORT).show();
+                            new AlertDialog.Builder(requireContext())
+                                    .setTitle(R.string.ssh_start_failed)
+                                    .setMessage(e.getMessage() != null ? e.getMessage() : "Unknown error")
+                                    .setPositiveButton(android.R.string.ok, null)
+                                    .show();
                         });
                     }
                 }

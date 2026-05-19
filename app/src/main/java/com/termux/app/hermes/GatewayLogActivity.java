@@ -33,6 +33,7 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -55,6 +56,9 @@ public class GatewayLogActivity extends AppCompatActivity {
     private String mCurrentFilter = "ALL";
     private String mFullLogContent = "";
     private boolean mAutoScroll = true;
+    private String mCurrentTab = "gateway";
+    private TextView mTabGateway;
+    private TextView mTabSsh;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -109,6 +113,59 @@ public class GatewayLogActivity extends AppCompatActivity {
         sepParams.setMargins(dp(12), dp(4), dp(12), dp(4));
         separator.setLayoutParams(sepParams);
         layout.addView(separator);
+
+        // --- Tab switcher: Gateway | SSH ---
+        LinearLayout tabBar = new LinearLayout(this);
+        tabBar.setOrientation(LinearLayout.HORIZONTAL);
+        tabBar.setPadding(dp(12), dp(4), dp(12), dp(0));
+
+        int tabPadV = dp(6);
+        int tabPadH = dp(16);
+        int tabActiveBg = 0xFF1A1A2E;
+        int tabInactiveBg = 0xFFEEEEEE;
+        int tabActiveText = 0xFFFFFFFF;
+        int tabInactiveText = 0xFF666666;
+
+        mTabGateway = new TextView(this);
+        mTabGateway.setText("Gateway");
+        mTabGateway.setTextSize(13);
+        mTabGateway.setTypeface(null, Typeface.BOLD);
+        mTabGateway.setPadding(tabPadH, tabPadV, tabPadH, tabPadV);
+        mTabGateway.setTextColor(tabActiveText);
+        mTabGateway.setBackgroundColor(tabActiveBg);
+        mTabGateway.setOnClickListener(v -> {
+            if ("gateway".equals(mCurrentTab)) return;
+            mCurrentTab = "gateway";
+            mTabGateway.setTextColor(tabActiveText);
+            mTabGateway.setBackgroundColor(tabActiveBg);
+            mTabSsh.setTextColor(tabInactiveText);
+            mTabSsh.setBackgroundColor(tabInactiveBg);
+            loadLog();
+            if (mCurrentTab.equals("gateway")) loadSessionHistory();
+            startFileObserver();
+        });
+
+        mTabSsh = new TextView(this);
+        mTabSsh.setText("SSH");
+        mTabSsh.setTextSize(13);
+        mTabSsh.setTypeface(null, Typeface.BOLD);
+        mTabSsh.setPadding(tabPadH, tabPadV, tabPadH, tabPadV);
+        mTabSsh.setTextColor(tabInactiveText);
+        mTabSsh.setBackgroundColor(tabInactiveBg);
+        mTabSsh.setOnClickListener(v -> {
+            if ("ssh".equals(mCurrentTab)) return;
+            mCurrentTab = "ssh";
+            mTabSsh.setTextColor(tabActiveText);
+            mTabSsh.setBackgroundColor(tabActiveBg);
+            mTabGateway.setTextColor(tabInactiveText);
+            mTabGateway.setBackgroundColor(tabInactiveBg);
+            loadLog();
+            stopFileObserver();
+        });
+
+        tabBar.addView(mTabGateway);
+        tabBar.addView(mTabSsh);
+        layout.addView(tabBar);
 
         // --- Filter bar ---
         LinearLayout filterBar = new LinearLayout(this);
@@ -356,6 +413,14 @@ public class GatewayLogActivity extends AppCompatActivity {
     // =========================================================================
 
     private void loadLog() {
+        if ("ssh".equals(mCurrentTab)) {
+            loadSshLog();
+        } else {
+            loadGatewayLog();
+        }
+    }
+
+    private void loadGatewayLog() {
         new Thread(() -> {
             mFullLogContent = readLastLines();
             runOnUiThread(() -> {
@@ -367,9 +432,38 @@ public class GatewayLogActivity extends AppCompatActivity {
         }).start();
     }
 
+    private void loadSshLog() {
+        new Thread(() -> {
+            StringBuilder log = new StringBuilder();
+            try {
+                ProcessBuilder pb = new ProcessBuilder("logcat", "-d", "-t", String.valueOf(MAX_LINES),
+                        "-s", "sshd:*", "Sshd:*", "HermesInstaller:*", "GatewayControl:*");
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+                BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    log.append(line).append("\n");
+                }
+                p.waitFor();
+            } catch (Exception e) {
+                log.append("Error reading SSH log: ").append(e.getMessage());
+            }
+            mFullLogContent = log.toString();
+            runOnUiThread(() -> {
+                applyFilter();
+                if (mAutoScroll) {
+                    mScrollView.post(() -> mScrollView.fullScroll(ScrollView.FOCUS_DOWN));
+                }
+            });
+        }).start();
+    }
+
     private void applyFilter() {
         if (mFullLogContent.isEmpty()) {
-            if (!HermesGatewayService.isRunning()) {
+            if ("ssh".equals(mCurrentTab)) {
+                mLogText.setText("No SSH log entries found.\n\nSSH logs are captured from logcat (tags: sshd, HermesInstaller, GatewayControl).");
+            } else if (!HermesGatewayService.isRunning()) {
                 mLogText.setText(getString(R.string.gateway_log_not_running_hint));
             } else {
                 mLogText.setText(getString(R.string.gateway_log_empty));
@@ -429,6 +523,11 @@ public class GatewayLogActivity extends AppCompatActivity {
     }
 
     private void clearLog() {
+        if ("ssh".equals(mCurrentTab)) {
+            loadSshLog();
+            Toast.makeText(this, R.string.gateway_log_refresh, Toast.LENGTH_SHORT).show();
+            return;
+        }
         new Thread(() -> {
             File file = new File(LOG_FILE_PATH);
             if (file.exists()) {
@@ -451,7 +550,8 @@ public class GatewayLogActivity extends AppCompatActivity {
         try {
             ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
             if (cm != null) {
-                ClipData clip = ClipData.newPlainText("Gateway Log", mLogText.getText());
+                String label = "ssh".equals(mCurrentTab) ? "SSH Log" : "Gateway Log";
+                ClipData clip = ClipData.newPlainText(label, mLogText.getText());
                 cm.setPrimaryClip(clip);
                 Toast.makeText(this, R.string.gateway_log_copied, Toast.LENGTH_SHORT).show();
             }
