@@ -114,6 +114,12 @@ android {
         targetCompatibility JavaVersion.VERSION_1_8
     }
 
+    sourceSets {
+        main {
+            jniLibs.srcDirs += "../terminal-emulator/src/main/jni/libs"
+        }
+    }
+
     externalNativeBuild {
         ndkBuild {
             path "src/main/cpp/Android.mk"
