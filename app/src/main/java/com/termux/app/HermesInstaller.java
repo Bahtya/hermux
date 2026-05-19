@@ -903,7 +903,8 @@ public class HermesInstaller {
 
         if (!sshd.exists()) {
             Logger.logInfo(LOG_TAG, "SSH: installing openssh...");
-            runShellCommand("pkg install -y openssh");
+            try { runShellCommand("apt-get update -y"); } catch (Exception ignored) {}
+            runShellCommand("apt-get install -y openssh");
         }
 
         // Generate host keys if missing

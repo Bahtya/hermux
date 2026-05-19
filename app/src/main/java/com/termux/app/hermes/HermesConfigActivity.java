@@ -2197,8 +2197,15 @@ public class HermesConfigActivity extends AppCompatActivity {
                     // Auto-install openssh if sshd binary is missing
                     if (!new File(sshdPath).exists()) {
                         diag.append("sshd not found, auto-installing openssh…\n");
-                        String pkgOutput = runPkgCommand(bashPath, prefix, "pkg install -y openssh 2>&1", 120_000);
-                        diag.append(truncateOutput(pkgOutput, 15)).append("\n");
+                        ensureAptMirror(prefix);
+                        String updateOut = runPkgCommand(bashPath, prefix,
+                                "apt-get update -y 2>&1", 60_000);
+                        if (updateOut.toLowerCase().contains("error")) {
+                            diag.append("apt-get update: ").append(truncateOutput(updateOut, 5)).append("\n");
+                        }
+                        String pkgOutput = runPkgCommand(bashPath, prefix,
+                                "apt-get install -y openssh 2>&1", 120_000);
+                        diag.append(truncateOutput(pkgOutput, 25)).append("\n");
                         if (!new File(sshdPath).exists()) {
                             diag.append("openssh install failed — sshd still not found at ").append(sshdPath);
                             showErrorDialog(diag.toString());
@@ -2309,6 +2316,36 @@ public class HermesConfigActivity extends AppCompatActivity {
             }).start();
         }
 
+        private void ensureAptMirror(String prefix) {
+            try {
+                File sourcesList = new File(prefix, "etc/apt/sources.list");
+                String tunaSource = "deb https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main stable main\n";
+                if (sourcesList.exists()) {
+                    byte[] raw = readFileBytes(sourcesList);
+                    if (raw != null && new String(raw, "UTF-8").contains("mirrors.tuna.tsinghua.edu.cn")) {
+                        return;
+                    }
+                }
+                File parent = sourcesList.getParentFile();
+                if (parent != null && !parent.exists()) parent.mkdirs();
+                try (java.io.FileOutputStream out = new java.io.FileOutputStream(sourcesList)) {
+                    out.write(tunaSource.getBytes("UTF-8"));
+                }
+            } catch (Exception ignored) {}
+        }
+
+        private static byte[] readFileBytes(File file) {
+            try (java.io.FileInputStream fis = new java.io.FileInputStream(file);
+                 java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream()) {
+                byte[] buf = new byte[8192];
+                int len;
+                while ((len = fis.read(buf)) != -1) bos.write(buf, 0, len);
+                return bos.toByteArray();
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
         private String runPkgCommand(String bashPath, String prefix, String command, long timeoutMs) {
             try {
                 ProcessBuilder pb = new ProcessBuilder(bashPath, "-c", command);
@@ -2322,6 +2359,10 @@ public class HermesConfigActivity extends AppCompatActivity {
                 String pathRewrite = TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH + "/libpath_rewrite.so";
                 if (new File(pathRewrite).exists()) {
                     pb.environment().put("LD_PRELOAD", pathRewrite);
+                }
+                String aptConfFile = prefix + "/etc/apt/apt.conf.d/99hermes-paths.conf";
+                if (new File(aptConfFile).exists()) {
+                    pb.environment().put("APT_CONFIG", aptConfFile);
                 }
                 pb.redirectErrorStream(true);
                 Process p = pb.start();
