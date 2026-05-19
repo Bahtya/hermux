@@ -2195,7 +2195,9 @@ public class HermesConfigActivity extends AppCompatActivity {
                     StringBuilder diag = new StringBuilder();
 
                     // Auto-install openssh if sshd binary is missing
+                    boolean justInstalled = false;
                     if (!new File(sshdPath).exists()) {
+                        justInstalled = true;
                         diag.append("sshd not found, auto-installing openssh…\n");
                         ensureAptMirror(prefix);
                         String updateOut = runPkgCommand(bashPath, prefix,
@@ -2213,24 +2215,40 @@ public class HermesConfigActivity extends AppCompatActivity {
                         }
                     }
 
-                    // Always redeploy sshd_config after install to ensure correct paths
-                    String pathRewriteLib = TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH + "/libpath_rewrite.so";
-                    String setEnv = new File(pathRewriteLib).exists()
-                            ? "SetEnv LD_PRELOAD=" + pathRewriteLib : "";
-                    runPkgCommand(bashPath, prefix,
-                            "mkdir -p " + prefix + "/etc/ssh && "
-                            + "printf 'Port 8022\\nPasswordAuthentication yes\\nPrintMotd yes\\n"
-                            + setEnv + "\\n"
-                            + "Subsystem sftp " + prefix + "/libexec/sftp-server\\n' > "
-                            + prefix + "/etc/ssh/sshd_config 2>&1", 10_000);
+                    if (justInstalled) {
+                        // Force deploy sshd_config to ensure correct paths for hermux
+                        String pathRewriteLib = TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH + "/libpath_rewrite.so";
+                        String setEnv = new File(pathRewriteLib).exists()
+                                ? "SetEnv LD_PRELOAD=" + pathRewriteLib : "";
+                        runPkgCommand(bashPath, prefix,
+                                "mkdir -p " + prefix + "/etc/ssh && "
+                                + "printf 'Port 8022\\nPasswordAuthentication yes\\nPrintMotd yes\\n"
+                                + setEnv + "\\n"
+                                + "Subsystem sftp " + prefix + "/libexec/sftp-server\\n' > "
+                                + prefix + "/etc/ssh/sshd_config 2>&1", 10_000);
 
-                    // Force generate host keys (ssh-keygen -A won't overwrite existing)
-                    runPkgCommand(bashPath, prefix,
-                            TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/ssh-keygen -A 2>&1", 30_000);
-                    runPkgCommand(bashPath, prefix,
-                            "chmod 600 " + prefix + "/etc/ssh/ssh_host_*_key 2>/dev/null", 5_000);
+                        // Force generate host keys (ssh-keygen -A won't overwrite existing)
+                        runPkgCommand(bashPath, prefix,
+                                TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/ssh-keygen -A 2>&1", 30_000);
+                        runPkgCommand(bashPath, prefix,
+                                "chmod 600 " + prefix + "/etc/ssh/ssh_host_*_key 2>/dev/null", 5_000);
+                    } else {
+                        // Already installed: only fill missing pieces
+                        File sshDir = new File(prefix, "etc/ssh");
+                        boolean hasHostKey = false;
+                        if (sshDir.isDirectory()) {
+                            File[] keys = sshDir.listFiles((d, n) -> n.startsWith("ssh_host_") && n.endsWith("_key"));
+                            hasHostKey = keys != null && keys.length > 0;
+                        }
+                        if (!hasHostKey) {
+                            runPkgCommand(bashPath, prefix,
+                                    TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/ssh-keygen -A 2>&1", 30_000);
+                            runPkgCommand(bashPath, prefix,
+                                    "chmod 600 " + prefix + "/etc/ssh/ssh_host_*_key 2>/dev/null", 5_000);
+                        }
+                    }
 
-                    // Verify host keys actually exist before attempting sshd start
+                    // Verify host keys exist before attempting sshd start
                     File sshDir = new File(prefix, "etc/ssh");
                     boolean hasHostKey = false;
                     if (sshDir.isDirectory()) {
@@ -2317,9 +2335,14 @@ public class HermesConfigActivity extends AppCompatActivity {
                 File sourcesList = new File(prefix, "etc/apt/sources.list");
                 String tunaSource = "deb https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main stable main\n";
                 if (sourcesList.exists()) {
-                    byte[] raw = readFileBytes(sourcesList);
-                    if (raw != null && new String(raw, "UTF-8").contains("mirrors.tuna.tsinghua.edu.cn")) {
-                        return;
+                    try (java.io.FileInputStream fis = new java.io.FileInputStream(sourcesList);
+                         java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream()) {
+                        byte[] buf = new byte[8192];
+                        int len;
+                        while ((len = fis.read(buf)) != -1) bos.write(buf, 0, len);
+                        if (new String(bos.toByteArray(), "UTF-8").contains("mirrors.tuna.tsinghua.edu.cn")) {
+                            return;
+                        }
                     }
                 }
                 File parent = sourcesList.getParentFile();
@@ -2327,18 +2350,9 @@ public class HermesConfigActivity extends AppCompatActivity {
                 try (java.io.FileOutputStream out = new java.io.FileOutputStream(sourcesList)) {
                     out.write(tunaSource.getBytes("UTF-8"));
                 }
-            } catch (Exception ignored) {}
-        }
-
-        private static byte[] readFileBytes(File file) {
-            try (java.io.FileInputStream fis = new java.io.FileInputStream(file);
-                 java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream()) {
-                byte[] buf = new byte[8192];
-                int len;
-                while ((len = fis.read(buf)) != -1) bos.write(buf, 0, len);
-                return bos.toByteArray();
+                com.termux.shared.logger.Logger.logInfo("GatewayControl", "Rewrote sources.list to TUNA mirror");
             } catch (Exception e) {
-                return null;
+                com.termux.shared.logger.Logger.logWarn("GatewayControl", "ensureAptMirror failed: " + e.getMessage());
             }
         }
 
