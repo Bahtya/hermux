@@ -24,6 +24,7 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import com.termux.R;
 import com.termux.app.HermesInstaller;
+import com.termux.app.TermuxInstaller;
 import com.termux.shared.termux.TermuxConstants;
 
 import java.io.BufferedReader;
@@ -219,6 +220,32 @@ public class HermesInstallActivity extends AppCompatActivity {
 
         new Thread(() -> {
             try {
+                // Step 0: Ensure Termux bootstrap is extracted before anything else.
+                // This activity may be opened before TermuxActivity has finished
+                // bootstrap extraction (e.g. from config or profile screen).
+                String bashPath = TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/bash";
+                if (!new File(bashPath).exists()) {
+                    appendTerminal("Bootstrap not found, triggering extraction...");
+                    final boolean[] bootstrapDone = {false};
+                    runOnUiThread(() -> {
+                        TermuxInstaller.setupBootstrapIfNeeded(HermesInstallActivity.this, () -> {
+                            synchronized (bootstrapDone) {
+                                bootstrapDone[0] = true;
+                                bootstrapDone.notifyAll();
+                            }
+                        });
+                    });
+                    synchronized (bootstrapDone) {
+                        while (!bootstrapDone[0]) {
+                            bootstrapDone.wait();
+                        }
+                    }
+                    if (!new File(bashPath).exists()) {
+                        throw new RuntimeException("Bootstrap extraction completed but bash still missing");
+                    }
+                    appendTerminal("Bootstrap extraction complete");
+                }
+
                 // Step 1: Check prerequisites
                 mHandler.post(() -> {
                     mStatusText.setText(R.string.install_checking);
