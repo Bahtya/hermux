@@ -2192,42 +2192,52 @@ public class HermesConfigActivity extends AppCompatActivity {
                     String sshdPath = TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/sshd";
                     String prefix = TermuxConstants.TERMUX_PREFIX_DIR_PATH;
 
-                    // Collect prerequisite diagnostics
                     StringBuilder diag = new StringBuilder();
+
+                    // Auto-install openssh if sshd binary is missing
                     if (!new File(sshdPath).exists()) {
-                        diag.append("sshd binary not found at ").append(sshdPath).append("\n");
+                        diag.append("sshd not found, auto-installing openssh…\n");
+                        String pkgOutput = runPkgCommand(bashPath, prefix, "pkg install -y openssh 2>&1", 120_000);
+                        diag.append(truncateOutput(pkgOutput, 15)).append("\n");
+                        if (!new File(sshdPath).exists()) {
+                            diag.append("openssh install failed — sshd still not found at ").append(sshdPath);
+                            showErrorDialog(diag.toString());
+                            return;
+                        }
                     }
+
+                    // Deploy sshd_config if missing (after openssh install)
+                    String pathRewriteLib = TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH + "/libpath_rewrite.so";
                     File sshdConfig = new File(prefix, "etc/ssh/sshd_config");
                     if (!sshdConfig.exists()) {
-                        diag.append("sshd_config not found at ").append(sshdConfig.getAbsolutePath()).append("\n");
+                        diag.append("sshd_config missing, deploying default config…\n");
+                        String setEnv = new File(pathRewriteLib).exists()
+                                ? "SetEnv LD_PRELOAD=" + pathRewriteLib : "";
+                        String cfgDeploy = runPkgCommand(bashPath, prefix,
+                                "mkdir -p " + prefix + "/etc/ssh && "
+                                + "printf 'Port 8022\\nPasswordAuthentication yes\\nPrintMotd yes\\n"
+                                + setEnv + "\\n"
+                                + "Subsystem sftp " + prefix + "/libexec/sftp-server\\n' > "
+                                + prefix + "/etc/ssh/sshd_config 2>&1 && echo __CFG_OK__", 10_000);
+                        if (!cfgDeploy.contains("__CFG_OK__")) {
+                            diag.append(cfgDeploy).append("\n");
+                        }
                     }
-                    boolean hasHostKey = false;
+
+                    // Auto-generate host keys if missing
                     File sshDir = new File(prefix, "etc/ssh");
+                    boolean hasHostKey = false;
                     if (sshDir.isDirectory()) {
                         File[] keys = sshDir.listFiles((d, n) -> n.startsWith("ssh_host_") && n.endsWith("_key"));
                         hasHostKey = keys != null && keys.length > 0;
                     }
                     if (!hasHostKey) {
-                        // Auto-generate host keys
-                        try {
-                            ProcessBuilder kgPb = new ProcessBuilder(bashPath, "-c",
-                                    TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/ssh-keygen -A 2>&1");
-                            kgPb.environment().put("HOME", TermuxConstants.TERMUX_HOME_DIR_PATH);
-                            kgPb.environment().put("PREFIX", prefix);
-                            kgPb.environment().put("LD_LIBRARY_PATH", TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
-                            String pathRewriteKg = TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH + "/libpath_rewrite.so";
-                            if (new File(pathRewriteKg).exists()) {
-                                kgPb.environment().put("LD_PRELOAD", pathRewriteKg);
-                            }
-                            kgPb.redirectErrorStream(true);
-                            Process kgP = kgPb.start();
-                            java.io.BufferedReader kgReader = new java.io.BufferedReader(
-                                    new java.io.InputStreamReader(kgP.getInputStream()));
-                            while (kgReader.readLine() != null) {}
-                            kgP.waitFor();
-                        } catch (Exception kgEx) {
-                            diag.append("ssh-keygen -A failed: ").append(kgEx.getMessage()).append("\n");
-                        }
+                        diag.append("Host keys missing, generating…\n");
+                        String kgOutput = runPkgCommand(bashPath, prefix,
+                                TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/ssh-keygen -A 2>&1", 30_000);
+                        diag.append(truncateOutput(kgOutput, 10)).append("\n");
+                        runPkgCommand(bashPath, prefix,
+                                "chmod 600 " + prefix + "/etc/ssh/ssh_host_*_key 2>/dev/null", 5_000);
                     }
 
                     ProcessBuilder pb = new ProcessBuilder(bashPath, "-c",
@@ -2254,14 +2264,15 @@ public class HermesConfigActivity extends AppCompatActivity {
                         while ((line = reader.readLine()) != null) {
                             output.append(line).append("\n");
                         }
-                        p.waitFor();
+                        if (!p.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)) {
+                            output.append("[sshd start timed out]");
+                        }
                     } finally {
                         p.destroy();
                     }
 
                     String outputStr = output.toString().trim();
                     boolean success = outputStr.endsWith("__OK__");
-                    // Strip status markers from display output
                     String cleanOutput = outputStr.replace("__OK__", "").replace("__FAIL__", "").trim();
 
                     if (!success) {
@@ -2285,11 +2296,7 @@ public class HermesConfigActivity extends AppCompatActivity {
                                 if (errorMsg.trim().isEmpty()) {
                                     errorMsg = getString(R.string.ssh_no_output_hint);
                                 }
-                                new AlertDialog.Builder(requireContext())
-                                        .setTitle(R.string.ssh_start_failed)
-                                        .setMessage(errorMsg)
-                                        .setPositiveButton(android.R.string.ok, null)
-                                        .show();
+                                showErrorDialog(errorMsg);
                             }
                             updateSshStatus();
                         });
@@ -2297,17 +2304,74 @@ public class HermesConfigActivity extends AppCompatActivity {
                 } catch (Exception e) {
                     com.termux.shared.logger.Logger.logErrorExtended("GatewayControl",
                             "startSshd exception: " + e.getMessage());
-                    if (getActivity() != null) {
-                        getActivity().runOnUiThread(() -> {
-                            new AlertDialog.Builder(requireContext())
-                                    .setTitle(R.string.ssh_start_failed)
-                                    .setMessage(e.getMessage() != null ? e.getMessage() : "Unknown error")
-                                    .setPositiveButton(android.R.string.ok, null)
-                                    .show();
-                        });
-                    }
+                    showErrorDialog(e.getMessage() != null ? e.getMessage() : "Unknown error");
                 }
             }).start();
+        }
+
+        private String runPkgCommand(String bashPath, String prefix, String command, long timeoutMs) {
+            try {
+                ProcessBuilder pb = new ProcessBuilder(bashPath, "-c", command);
+                pb.environment().put("HOME", TermuxConstants.TERMUX_HOME_DIR_PATH);
+                pb.environment().put("PATH", TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + ":/system/bin");
+                pb.environment().put("PREFIX", prefix);
+                pb.environment().put("TMPDIR", TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH);
+                pb.environment().put("LD_LIBRARY_PATH", TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
+                pb.environment().put("TERMUX_VERSION", com.termux.BuildConfig.VERSION_NAME);
+                pb.environment().put("TERMINFO", prefix + "/share/terminfo");
+                String pathRewrite = TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH + "/libpath_rewrite.so";
+                if (new File(pathRewrite).exists()) {
+                    pb.environment().put("LD_PRELOAD", pathRewrite);
+                }
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+                StringBuilder sb = new StringBuilder();
+                try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(p.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        sb.append(line).append("\n");
+                    }
+                    if (!p.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                        p.destroyForcibly();
+                        return sb.toString().trim() + "\n[TIMEOUT after " + (timeoutMs / 1000) + "s]";
+                    }
+                } finally {
+                    p.destroy();
+                }
+                return sb.toString().trim();
+            } catch (Exception e) {
+                return "Command failed: " + e.getMessage();
+            }
+        }
+
+        private String truncateOutput(String output, int maxLines) {
+            if (output == null || output.isEmpty()) return output;
+            String[] lines = output.split("\n");
+            if (lines.length <= maxLines) return output;
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < maxLines; i++) sb.append(lines[i]).append("\n");
+            sb.append("... (").append(lines.length - maxLines).append(" more lines)");
+            return sb.toString();
+        }
+
+        private void showErrorDialog(String message) {
+            if (getActivity() == null) return;
+            getActivity().runOnUiThread(() -> {
+                new AlertDialog.Builder(requireContext())
+                        .setTitle(R.string.ssh_start_failed)
+                        .setMessage(message)
+                        .setPositiveButton(android.R.string.ok, null)
+                        .setNeutralButton(R.string.copy, (d, w) -> {
+                            ClipboardManager cm = (ClipboardManager) requireContext()
+                                    .getSystemService(Context.CLIPBOARD_SERVICE);
+                            if (cm != null) {
+                                cm.setPrimaryClip(ClipData.newPlainText("SSH Error", message));
+                                Toast.makeText(requireContext(), R.string.copied_to_clipboard, Toast.LENGTH_SHORT).show();
+                            }
+                        })
+                        .show();
+            });
         }
 
         private void stopSshd() {

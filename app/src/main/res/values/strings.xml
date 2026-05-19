@@ -1526,6 +1526,8 @@
     <string name="ssh_log_empty">No SSH log entries found.\n\nSSH logs are captured from logcat (tags: sshd, HermesInstaller, GatewayControl).</string>
     <string name="ssh_log_read_error">Error reading SSH log: %1$s</string>
     <string name="ssh_no_output_hint">sshd failed with no output (check logcat for details)</string>
+    <string name="copy">Copy</string>
+    <string name="copied_to_clipboard">Copied to clipboard</string>
 
     <!-- App Update -->
     <string name="update_checking">Checking for updates…</string>
