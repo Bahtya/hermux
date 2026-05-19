@@ -11,6 +11,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <stdint.h>
+#include <stdatomic.h>
 
 #define TERMUX_UNUSED(x) x __attribute__((__unused__))
 #ifdef __APPLE__
@@ -127,16 +128,21 @@ typedef int (*vproc_run_until_exit_fn)(uint32_t vpid);
 
 static vproc_create_process_fn g_vproc_create_process = NULL;
 static vproc_run_until_exit_fn g_vproc_run_until_exit = NULL;
-static int g_vproc_initialized = 0;
+static atomic_int g_vproc_initialized = ATOMIC_VAR_INIT(0);
 
 static void vproc_ensure_loaded(void) {
-    if (g_vproc_initialized) return;
-    g_vproc_initialized = 1;
+    int expected = 0;
+    if (!atomic_compare_exchange_strong(&g_vproc_initialized, &expected, 1))
+        return;
     void* lib = dlopen("libvproc.so", RTLD_NOW);
-    if (!lib) return;
+    if (!lib) {
+        fprintf(stderr, "[vproc] dlopen failed: %s\n", dlerror());
+        return;
+    }
     g_vproc_create_process = (vproc_create_process_fn)dlsym(lib, "vproc_ffi_create_process");
     g_vproc_run_until_exit = (vproc_run_until_exit_fn)dlsym(lib, "vproc_ffi_run_until_exit");
     if (!g_vproc_create_process || !g_vproc_run_until_exit) {
+        fprintf(stderr, "[vproc] dlsym failed: %s\n", dlerror());
         g_vproc_create_process = NULL;
         g_vproc_run_until_exit = NULL;
     }
@@ -188,10 +194,11 @@ static int create_subprocess_vproc(JNIEnv* env,
 
     // chdir before creating coroutine (affects whole process)
     if (cwd && chdir(cwd) != 0) {
-        char* error_message;
-        if (asprintf(&error_message, "chdir(\"%s\")", cwd) == -1) error_message = "chdir()";
-        perror(error_message);
+        char* error_message = NULL;
+        int allocated = (asprintf(&error_message, "chdir(\"%s\")", cwd) != -1);
+        perror(allocated ? error_message : "chdir()");
         fflush(stderr);
+        if (allocated && error_message) free(error_message);
     }
 
     // Create virtual process with pts mapped to fd 0/1/2
