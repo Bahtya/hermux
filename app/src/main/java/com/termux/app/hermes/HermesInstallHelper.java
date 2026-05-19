@@ -244,16 +244,37 @@ public class HermesInstallHelper {
     /**
      * Wait until bash can actually execute (bootstrap packages fully installed).
      */
+    private static void emit(ProgressCallback callback, String msg) {
+        Logger.logInfo(LOG_TAG, msg);
+        if (callback != null) callback.onOutput(msg);
+        synchronized (sOutputBuffer) {
+            sOutputBuffer.append(msg).append("\n");
+            if (sOutputBuffer.length() > MAX_BUFFER_SIZE) {
+                sOutputBuffer.delete(0, sOutputBuffer.length() - MAX_BUFFER_SIZE / 2);
+            }
+        }
+    }
+
     private static void ensureBashReady(Context context, ProgressCallback callback) throws Exception {
         String bashPath = TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/bash";
+        String prefixDir = TermuxConstants.TERMUX_PREFIX_DIR_PATH;
         int maxWaitAttempts = 40;
+
+        emit(callback, "Checking bootstrap: " + bashPath);
 
         for (int i = 0; i < maxWaitAttempts; i++) {
             if (callback != null && callback.isCancelled()) return;
 
-            if (!new File(bashPath).exists()) {
-                Logger.logInfo(LOG_TAG, "Bootstrap not ready: bash not found at " + bashPath
-                        + " (" + (i + 1) + "/" + maxWaitAttempts + ")");
+            File bashFile = new File(bashPath);
+            if (!bashFile.exists()) {
+                // First attempt: dump diagnostic info
+                if (i == 0) {
+                    emit(callback, "PREFIX exists: " + new File(prefixDir).exists());
+                    emit(callback, "PREFIX/bin exists: " + new File(prefixDir + "/bin").exists());
+                    String[] bins = new File(prefixDir + "/bin").list();
+                    emit(callback, "PREFIX/bin contents: " + (bins != null ? java.util.Arrays.toString(bins) : "null"));
+                }
+                emit(callback, "bash not found (" + (i + 1) + "/" + maxWaitAttempts + ")");
             } else {
                 try {
                     ProcessBuilder pb = new ProcessBuilder(bashPath, "-c", "echo ok");
@@ -264,20 +285,24 @@ public class HermesInstallHelper {
                     }
                     pb.redirectErrorStream(true);
                     Process p = pb.start();
+                    String output;
                     try (java.io.InputStream is = p.getInputStream()) {
-                        byte[] buf = new byte[64];
+                        byte[] buf = new byte[256];
+                        int n = is.read(buf);
+                        output = n > 0 ? new String(buf, 0, n).trim() : "";
                         while (is.read(buf) != -1) {}
                     }
                     int exit = p.waitFor();
                     if (exit == 0) {
-                        Logger.logInfo(LOG_TAG, "Bootstrap ready: bash executed successfully");
+                        emit(callback, "Bootstrap ready: bash executed successfully");
                         return;
                     }
-                    Logger.logWarn(LOG_TAG, "Bootstrap not ready: bash exited with code " + exit
+                    emit(callback, "bash exited with code " + exit + ", output: [" + output + "]"
                             + " (" + (i + 1) + "/" + maxWaitAttempts + ")");
                 } catch (Exception e) {
-                    Logger.logWarn(LOG_TAG, "Bootstrap not ready: bash execution failed: "
-                            + e.getMessage() + " (" + (i + 1) + "/" + maxWaitAttempts + ")");
+                    emit(callback, "bash execution failed: " + e.getClass().getSimpleName()
+                            + ": " + e.getMessage()
+                            + " (" + (i + 1) + "/" + maxWaitAttempts + ")");
                 }
             }
 
