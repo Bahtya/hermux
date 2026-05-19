@@ -169,6 +169,12 @@ static int create_subprocess_vproc(JNIEnv* env,
                                   rows, columns, cell_width, cell_height);
     }
 
+    // vproc disabled — do_yield() cannot be called from the Java waitFor
+    // thread (not a coroutine context), causing signal 118 crash.
+    // TODO: implement thread-safe polling in vproc_ffi_run_until_exit
+    return create_subprocess(env, cmd, cwd, argv, envp, pProcessId,
+                              rows, columns, cell_width, cell_height);
+
     // PTY setup (same as create_subprocess)
     int ptm = open("/dev/ptmx", O_RDWR | O_CLOEXEC);
     if (ptm < 0) return throw_runtime_exception(env, "Cannot open /dev/ptmx");
@@ -304,12 +310,8 @@ JNIEXPORT void JNICALL Java_com_termux_terminal_JNI_setPtyUTF8Mode(JNIEnv* TERMU
 
 JNIEXPORT jint JNICALL Java_com_termux_terminal_JNI_waitFor(JNIEnv* TERMUX_UNUSED(env), jclass TERMUX_UNUSED(clazz), jint pid)
 {
-    // Try vproc — only if vpid exists to avoid collision with real PIDs
-    vproc_ensure_loaded();
-    if (g_vproc_vpid_exists && g_vproc_run_until_exit && g_vproc_vpid_exists((uint32_t)pid)) {
-        int code = g_vproc_run_until_exit((uint32_t)pid);
-        if (code >= 0) return code;
-    }
+    // vproc disabled — see create_subprocess_vproc for details
+    // TODO: re-enable once run_until_exit works from non-coroutine threads
 
     int status;
     waitpid(pid, &status, 0);
