@@ -2197,8 +2197,15 @@ public class HermesConfigActivity extends AppCompatActivity {
                     // Auto-install openssh if sshd binary is missing
                     if (!new File(sshdPath).exists()) {
                         diag.append("sshd not found, auto-installing openssh…\n");
-                        String pkgOutput = runPkgCommand(bashPath, prefix, "pkg install -y openssh 2>&1", 120_000);
-                        diag.append(truncateOutput(pkgOutput, 15)).append("\n");
+                        // Ensure mirror is configured before installing
+                        runPkgCommand(bashPath, prefix,
+                                "grep -q tuna " + prefix + "/etc/apt/sources.list 2>/dev/null"
+                                + " || echo 'deb https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main stable main' > " + prefix + "/etc/apt/sources.list",
+                                5_000);
+                        runPkgCommand(bashPath, prefix, "apt-get update -y 2>&1", 60_000);
+                        String pkgOutput = runPkgCommand(bashPath, prefix,
+                                "apt-get install -y openssh 2>&1", 120_000);
+                        diag.append(truncateOutput(pkgOutput, 25)).append("\n");
                         if (!new File(sshdPath).exists()) {
                             diag.append("openssh install failed — sshd still not found at ").append(sshdPath);
                             showErrorDialog(diag.toString());
@@ -2322,6 +2329,10 @@ public class HermesConfigActivity extends AppCompatActivity {
                 String pathRewrite = TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH + "/libpath_rewrite.so";
                 if (new File(pathRewrite).exists()) {
                     pb.environment().put("LD_PRELOAD", pathRewrite);
+                }
+                String aptConfFile = prefix + "/etc/apt/apt.conf.d/99hermes-paths.conf";
+                if (new File(aptConfFile).exists()) {
+                    pb.environment().put("APT_CONFIG", aptConfFile);
                 }
                 pb.redirectErrorStream(true);
                 Process p = pb.start();
