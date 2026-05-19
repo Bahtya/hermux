@@ -1,4 +1,5 @@
 #include <dirent.h>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <jni.h>
 #include <signal.h>
@@ -9,6 +10,7 @@
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
+#include <stdint.h>
 
 #define TERMUX_UNUSED(x) x __attribute__((__unused__))
 #ifdef __APPLE__
@@ -114,6 +116,97 @@ static int create_subprocess(JNIEnv* env,
     }
 }
 
+// ---------------------------------------------------------------------------
+// vproc integration: coroutine-based virtual process
+// ---------------------------------------------------------------------------
+
+typedef uint32_t (*vproc_create_process_fn)(
+    const char* path, char* const argv[], char* const envp[],
+    int stdin_fd, int stdout_fd, int stderr_fd);
+typedef int (*vproc_run_until_exit_fn)(uint32_t vpid);
+
+static vproc_create_process_fn g_vproc_create_process = NULL;
+static vproc_run_until_exit_fn g_vproc_run_until_exit = NULL;
+static int g_vproc_initialized = 0;
+
+static void vproc_ensure_loaded(void) {
+    if (g_vproc_initialized) return;
+    g_vproc_initialized = 1;
+    void* lib = dlopen("libvproc.so", RTLD_NOW);
+    if (!lib) return;
+    g_vproc_create_process = (vproc_create_process_fn)dlsym(lib, "vproc_ffi_create_process");
+    g_vproc_run_until_exit = (vproc_run_until_exit_fn)dlsym(lib, "vproc_ffi_run_until_exit");
+    if (!g_vproc_create_process || !g_vproc_run_until_exit) {
+        g_vproc_create_process = NULL;
+        g_vproc_run_until_exit = NULL;
+    }
+}
+
+static int create_subprocess_vproc(JNIEnv* env,
+        char const* cmd,
+        char const* cwd,
+        char* const argv[],
+        char** envp,
+        int* pProcessId,
+        jint rows,
+        jint columns,
+        jint cell_width,
+        jint cell_height)
+{
+    vproc_ensure_loaded();
+    if (!g_vproc_create_process) {
+        return create_subprocess(env, cmd, cwd, argv, envp, pProcessId,
+                                  rows, columns, cell_width, cell_height);
+    }
+
+    // PTY setup (same as create_subprocess)
+    int ptm = open("/dev/ptmx", O_RDWR | O_CLOEXEC);
+    if (ptm < 0) return throw_runtime_exception(env, "Cannot open /dev/ptmx");
+
+    char devname[64];
+    if (grantpt(ptm) || unlockpt(ptm) ||
+        ptsname_r(ptm, devname, sizeof(devname))) {
+        return throw_runtime_exception(env, "Cannot grantpt()/unlockpt()/ptsname_r()");
+    }
+
+    struct termios tios;
+    tcgetattr(ptm, &tios);
+    tios.c_iflag |= IUTF8;
+    tios.c_iflag &= ~(IXON | IXOFF);
+    tcsetattr(ptm, TCSANOW, &tios);
+
+    struct winsize sz = {
+        .ws_row = (unsigned short) rows, .ws_col = (unsigned short) columns,
+        .ws_xpixel = (unsigned short) (columns * cell_width),
+        .ws_ypixel = (unsigned short) (rows * cell_height)
+    };
+    ioctl(ptm, TIOCSWINSZ, &sz);
+
+    // Open PTY slave
+    int pts = open(devname, O_RDWR);
+    if (pts < 0) return throw_runtime_exception(env, "Cannot open PTY slave");
+
+    // chdir before creating coroutine (affects whole process)
+    if (cwd && chdir(cwd) != 0) {
+        char* error_message;
+        if (asprintf(&error_message, "chdir(\"%s\")", cwd) == -1) error_message = "chdir()";
+        perror(error_message);
+        fflush(stderr);
+    }
+
+    // Create virtual process with pts mapped to fd 0/1/2
+    uint32_t vpid = g_vproc_create_process(cmd, argv, envp, pts, pts, pts);
+    if (vpid == 0) {
+        close(pts);
+        return create_subprocess(env, cmd, cwd, argv, envp, pProcessId,
+                                  rows, columns, cell_width, cell_height);
+    }
+
+    // pts stays open — the coroutine's VfdTable references it
+    *pProcessId = (int) vpid;
+    return ptm;
+}
+
 JNIEXPORT jint JNICALL Java_com_termux_terminal_JNI_createSubprocess(
         JNIEnv* env,
         jclass TERMUX_UNUSED(clazz),
@@ -160,7 +253,7 @@ JNIEXPORT jint JNICALL Java_com_termux_terminal_JNI_createSubprocess(
     int procId = 0;
     char const* cmd_cwd = (*env)->GetStringUTFChars(env, cwd, NULL);
     char const* cmd_utf8 = (*env)->GetStringUTFChars(env, cmd, NULL);
-    int ptm = create_subprocess(env, cmd_utf8, cmd_cwd, argv, envp, &procId, rows, columns, cell_width, cell_height);
+    int ptm = create_subprocess_vproc(env, cmd_utf8, cmd_cwd, argv, envp, &procId, rows, columns, cell_width, cell_height);
     (*env)->ReleaseStringUTFChars(env, cmd, cmd_utf8);
     (*env)->ReleaseStringUTFChars(env, cmd, cmd_cwd);
 
@@ -200,6 +293,13 @@ JNIEXPORT void JNICALL Java_com_termux_terminal_JNI_setPtyUTF8Mode(JNIEnv* TERMU
 
 JNIEXPORT jint JNICALL Java_com_termux_terminal_JNI_waitFor(JNIEnv* TERMUX_UNUSED(env), jclass TERMUX_UNUSED(clazz), jint pid)
 {
+    // Try vproc for virtual pids
+    vproc_ensure_loaded();
+    if (g_vproc_run_until_exit && pid > 0) {
+        int code = g_vproc_run_until_exit((uint32_t)pid);
+        if (code >= 0) return code;
+    }
+
     int status;
     waitpid(pid, &status, 0);
     if (WIFEXITED(status)) {
