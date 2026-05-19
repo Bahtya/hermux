@@ -1,8 +1,6 @@
 package com.termux.app.hermes;
 
 import android.content.Context;
-import android.content.res.AssetManager;
-
 import com.termux.shared.logger.Logger;
 import com.termux.shared.termux.TermuxConstants;
 
@@ -19,6 +17,17 @@ import java.io.OutputStream;
 public class VenvExtractor {
     private static final String LOG_TAG = "VenvExtractor";
     private static final String ASSET_NAME = "venv-aarch64.tar";
+
+    private static void emit(HermesInstallHelper.ProgressCallback callback, String msg) {
+        Logger.logInfo(LOG_TAG, msg);
+        if (callback != null) callback.onOutput(msg);
+        synchronized (HermesInstallHelper.sOutputBuffer) {
+            HermesInstallHelper.sOutputBuffer.append(msg).append("\n");
+            if (HermesInstallHelper.sOutputBuffer.length() > 50000) {
+                HermesInstallHelper.sOutputBuffer.delete(0, 25000);
+            }
+        }
+    }
 
     public static boolean hasPrebuiltVenv(Context context) {
         try {
@@ -46,24 +55,33 @@ public class VenvExtractor {
      * @return true if extraction succeeded, false otherwise
      */
     public static boolean extractVenv(Context context) {
+        return extractVenv(context, null);
+    }
+
+    public static boolean extractVenv(Context context, HermesInstallHelper.ProgressCallback callback) {
         String hermesDir = TermuxConstants.TERMUX_HOME_DIR_PATH + "/.hermes/hermes-agent";
         String venvDir = hermesDir + "/venv";
         String tmpFile = TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH + "/venv-aarch64.tar";
 
         // Check if venv already exists and is valid
         if (new File(venvDir + "/bin/python").exists()) {
+            emit(callback, "Venv already exists, skipping extraction");
             Logger.logInfo(LOG_TAG, "Venv already exists at " + venvDir + ", skipping extraction");
             return true;
         }
 
-        // Copy tar.gz from assets to tmp
+        // Copy tar from assets to tmp
+        emit(callback, "Copying venv from APK to temp...");
         Logger.logInfo(LOG_TAG, "Copying " + ASSET_NAME + " from APK assets to " + tmpFile);
         try {
             copyAsset(context, ASSET_NAME, tmpFile);
         } catch (IOException e) {
+            emit(callback, "Failed to copy venv asset: " + e.getMessage());
             Logger.logError(LOG_TAG, "Failed to copy venv asset: " + e.getMessage());
             return false;
         }
+        long tarSize = new File(tmpFile).length();
+        emit(callback, "Copied " + (tarSize / 1024 / 1024) + " MB, extracting...");
 
         // Extract using tar
         Logger.logInfo(LOG_TAG, "Extracting venv to " + hermesDir);
@@ -105,15 +123,21 @@ public class VenvExtractor {
                 while ((line = reader.readLine()) != null) {
                     output.append(line).append("\n");
                     Logger.logInfo(LOG_TAG, "extract: " + line);
+                    if (callback != null) callback.onOutput(line);
+                    synchronized (HermesInstallHelper.sOutputBuffer) {
+                        HermesInstallHelper.sOutputBuffer.append(line).append("\n");
+                    }
                 }
             }
 
             int exit = p.waitFor();
             if (exit != 0) {
+                emit(callback, "Venv extraction failed (exit " + exit + "): " + output);
                 Logger.logError(LOG_TAG, "Venv extraction failed (exit " + exit + "): " + output);
                 return false;
             }
         } catch (Exception e) {
+            emit(callback, "Venv extraction error: " + e.getMessage());
             Logger.logError(LOG_TAG, "Venv extraction error: " + e.getMessage());
             return false;
         }
@@ -123,6 +147,7 @@ public class VenvExtractor {
         File binDir = new File(venvDir + "/bin");
         String[] binContents = binDir.list();
         if (binContents == null || binContents.length == 0) {
+            emit(callback, "venv/bin/ is empty — extraction may have failed");
             Logger.logError(LOG_TAG, "venv/bin/ is empty — extraction may have failed");
             return false;
         }
@@ -131,6 +156,7 @@ public class VenvExtractor {
             if (name.equals("python")) { hasPython = true; break; }
         }
         if (!hasPython) {
+            emit(callback, "venv/bin/python not found after extraction");
             Logger.logError(LOG_TAG, "venv/bin/python not found after extraction");
             return false;
         }

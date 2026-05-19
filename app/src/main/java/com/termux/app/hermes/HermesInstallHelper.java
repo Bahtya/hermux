@@ -31,7 +31,7 @@ public class HermesInstallHelper {
             TermuxConstants.TERMUX_DATA_HOME_DIR_PATH + "/hermes-installed";
 
     private static final AtomicBoolean sInstallRunning = new AtomicBoolean(false);
-    private static final StringBuilder sOutputBuffer = new StringBuilder();
+    static final StringBuilder sOutputBuffer = new StringBuilder();
     private static final int MAX_BUFFER_SIZE = 50000;
 
     public static boolean isInstallRunning() {
@@ -144,16 +144,21 @@ public class HermesInstallHelper {
         setState(context, InstallState.BOOTSTRAPPING);
         ensureBashReady(context, callback);
 
+        emit(callback, "Deploying apt/dpkg configurations...");
         if (postBootstrap != null) {
             postBootstrap.onBootstrapReady();
         }
+        emit(callback, "Configuration deployed OK");
 
         // Clean stale apt/dpkg locks left by bootstrap initialization
+        emit(callback, "Cleaning stale locks...");
         cleanStaleLocks();
 
         // Phase 1: extract pre-built venv from APK assets
+        emit(callback, "Checking for pre-built venv...");
         if (!VenvExtractor.hasPrebuiltVenv(context)) {
             String msg = "No pre-built venv found in APK assets";
+            emit(callback, "ERROR: " + msg);
             Logger.logError(LOG_TAG, msg);
             setLastError(context, msg);
             setState(context, InstallState.FAILED);
@@ -161,24 +166,29 @@ public class HermesInstallHelper {
         }
 
         if (callback != null) callback.onStatus("Extracting pre-built environment...");
+        emit(callback, "Extracting pre-built venv (~70 MB)...");
         Logger.logInfo(LOG_TAG, "Extracting pre-built venv from APK assets");
-        if (!VenvExtractor.extractVenv(context)) {
+        if (!VenvExtractor.extractVenv(context, callback)) {
             String msg = "Pre-built venv extraction failed";
+            emit(callback, "ERROR: " + msg);
             Logger.logError(LOG_TAG, msg);
             setLastError(context, msg);
             setState(context, InstallState.FAILED);
             throw new RuntimeException(msg);
         }
+        emit(callback, "Venv extraction complete");
 
         // Phase 2: setup hermes command and validate
         setState(context, InstallState.INSTALLING);
         if (callback != null && callback.isCancelled()) return;
         if (callback != null) callback.onStatus("Setting up Hermes...");
+        emit(callback, "Running setup script (apt install python)...");
         Logger.logInfo(LOG_TAG, "Setting up hermes command and validating");
         runShellCommand(buildSetupScript(), callback);
 
         setLastError(context, null);
         setState(context, InstallState.INSTALLED);
+        emit(callback, "Setup script completed successfully");
     }
 
     /**
