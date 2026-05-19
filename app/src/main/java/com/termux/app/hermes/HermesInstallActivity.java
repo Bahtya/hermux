@@ -224,8 +224,21 @@ public class HermesInstallActivity extends AppCompatActivity {
                 // This activity may be opened before TermuxActivity has finished
                 // bootstrap extraction (e.g. from config or profile screen).
                 String bashPath = TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/bash";
+                String prefixDir = TermuxConstants.TERMUX_PREFIX_DIR_PATH;
                 if (!new File(bashPath).exists()) {
                     appendTerminal("Bootstrap not found, triggering extraction...");
+
+                    // Show what currently exists in PREFIX
+                    appendTerminal("PREFIX exists: " + new File(prefixDir).exists());
+                    File binDir = new File(prefixDir + "/bin");
+                    if (binDir.exists()) {
+                        String[] bins = binDir.list();
+                        appendTerminal("PREFIX/bin: " + (bins != null && bins.length > 0
+                                ? java.util.Arrays.toString(bins) : "(empty)"));
+                    } else {
+                        appendTerminal("PREFIX/bin: does not exist");
+                    }
+
                     final boolean[] bootstrapDone = {false};
                     runOnUiThread(() -> {
                         TermuxInstaller.setupBootstrapIfNeeded(HermesInstallActivity.this, () -> {
@@ -235,12 +248,37 @@ public class HermesInstallActivity extends AppCompatActivity {
                             }
                         });
                     });
-                    synchronized (bootstrapDone) {
-                        while (!bootstrapDone[0]) {
-                            bootstrapDone.wait();
+
+                    // Poll for progress while bootstrap runs in background
+                    int lastBinCount = -1;
+                    long lastLogTime = System.currentTimeMillis();
+                    while (!bootstrapDone[0]) {
+                        synchronized (bootstrapDone) {
+                            bootstrapDone.wait(2000);
+                        }
+                        if (bootstrapDone[0]) break;
+
+                        // Report progress every 4 seconds
+                        long now = System.currentTimeMillis();
+                        if (now - lastLogTime >= 4000) {
+                            lastLogTime = now;
+                            String[] bins = binDir.list();
+                            int count = bins != null ? bins.length : 0;
+                            boolean bashReady = new File(bashPath).exists();
+                            if (count != lastBinCount || bashReady) {
+                                lastBinCount = count;
+                                appendTerminal("  extracting... bin/ has " + count + " files"
+                                        + (bashReady ? ", bash ready" : ""));
+                            } else {
+                                appendTerminal("  extracting...");
+                            }
                         }
                     }
+
                     if (!new File(bashPath).exists()) {
+                        String[] bins = binDir.list();
+                        appendTerminal("ERROR: bootstrap finished but bash missing. bin/ contents: "
+                                + (bins != null ? java.util.Arrays.toString(bins) : "null"));
                         throw new RuntimeException("Bootstrap extraction completed but bash still missing");
                     }
                     appendTerminal("Bootstrap extraction complete");
