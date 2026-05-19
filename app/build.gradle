@@ -263,6 +263,7 @@ afterEvaluate {
     android.applicationVariants.all { variant ->
         variant.javaCompileProvider.get().dependsOn(downloadBootstraps)
         variant.javaCompileProvider.get().dependsOn(downloadVenvs)
+        variant.javaCompileProvider.get().dependsOn(downloadVprocs)
     }
 }
 
@@ -319,5 +320,66 @@ task downloadVenvs() {
     doLast {
         // Only arm64-v8a for now
         downloadVenv("aarch64")
+    }
+}
+
+def downloadVproc(String arch) {
+    def abiName = (arch == "aarch64") ? "arm64-v8a" : arch
+    def jniDir = "../terminal-emulator/src/main/jni/libs/${abiName}"
+    def soFile = new File(projectDir, "${jniDir}/libvproc.so")
+
+    if (soFile.exists()) {
+        logger.quiet("libvproc.so already present, skipping download")
+        return
+    }
+
+    def vprocTag = project.property("vprocVersion")
+    def remoteUrl = "https://github.com/Bahtya/vproc/releases/download/${vprocTag}/vproc-${vprocTag}-${arch}-linux-android.tar.gz"
+    logger.quiet("Downloading " + remoteUrl + " ...")
+
+    soFile.parentFile.mkdirs()
+    try {
+        def url = new URL(remoteUrl)
+        def maxRedirects = 5
+        for (int i = 0; i < maxRedirects; i++) {
+            def conn = url.openConnection()
+            conn.setInstanceFollowRedirects(false)
+            conn.setRequestProperty("Accept", "application/octet-stream")
+            switch (conn.getResponseCode()) {
+                case 200:
+                    def tmp = File.createTempFile("vproc", ".tar.gz")
+                    tmp.deleteOnExit()
+                    def out = new BufferedOutputStream(new FileOutputStream(tmp))
+                    out << conn.inputStream
+                    out.close()
+                    def tar = ["tar", "xzf", tmp.absolutePath, "-C", soFile.parentFile.absolutePath, "libvproc.so"].execute()
+                    def exitCode = tar.waitFor()
+                    tmp.delete()
+                    if (exitCode != 0) {
+                        throw new IOException("tar extract failed (exit ${exitCode}): ${tar.err.text?.take(200)}")
+                    }
+                    if (soFile.exists()) {
+                        logger.quiet("Downloaded libvproc.so (${soFile.length() / 1024} KB)")
+                    } else {
+                        throw new IOException("tar extract did not produce libvproc.so")
+                    }
+                    return
+                case 301: case 302: case 303: case 307: case 308:
+                    url = new URL(conn.getHeaderField("Location"))
+                    continue
+                default:
+                    throw new IOException("HTTP ${conn.getResponseCode()} for ${remoteUrl}")
+            }
+        }
+        throw new IOException("Too many redirects for ${remoteUrl}")
+    } catch (Exception e) {
+        logger.warn("Failed to download libvproc.so: ${e.message}")
+        logger.warn("Build will continue without vproc (shell sessions will use fork/exec fallback)")
+    }
+}
+
+task downloadVprocs() {
+    doLast {
+        downloadVproc("aarch64")
     }
 }
