@@ -8,6 +8,7 @@ import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.TextUtils;
 import android.text.style.StyleSpan;
+import android.util.TypedValue;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -59,7 +60,17 @@ public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession
 
         boolean shouldEnableDarkTheme = ThemeUtils.shouldEnableDarkTheme(mActivity, NightMode.getAppNightMode().getName());
 
-        if (shouldEnableDarkTheme) {
+        int defaultColor;
+        TypedValue tv = new TypedValue();
+        if (mActivity.getTheme().resolveAttribute(android.R.attr.textColorPrimary, tv, true)) {
+            defaultColor = tv.data;
+        } else {
+            defaultColor = shouldEnableDarkTheme ? Color.WHITE : Color.BLACK;
+        }
+
+        // Use dark background variant when text is light (dark theme or Hermes)
+        int brightness = (Color.red(defaultColor) * 299 + Color.green(defaultColor) * 587 + Color.blue(defaultColor) * 114) / 1000;
+        if (brightness > 128) {
             sessionTitleView.setBackground(
                 ContextCompat.getDrawable(mActivity, R.drawable.session_background_black_selected)
             );
@@ -86,7 +97,6 @@ public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession
         } else {
             sessionTitleView.setPaintFlags(sessionTitleView.getPaintFlags() | Paint.STRIKE_THRU_TEXT_FLAG);
         }
-        int defaultColor = shouldEnableDarkTheme ? Color.WHITE : Color.BLACK;
         int color = sessionRunning || sessionAtRow.getExitStatus() == 0 ? defaultColor : Color.RED;
         sessionTitleView.setTextColor(color);
         return sessionRowView;

@@ -14,6 +14,10 @@
         <item name="android:textColor">@color/white</item>
     </style>
 
+    <style name="Hermes.Drawer.ButtonBarStyle" parent="@style/Widget.MaterialComponents.Button.TextButton">
+        <item name="android:textColor">@color/hermes_accent</item>
+    </style>
+
     <style name="HermesCardView" parent="Widget.MaterialComponents.CardView">
         <item name="cardBackgroundColor">@color/hermes_card_background</item>
         <item name="cardCornerRadius">12dp</item>

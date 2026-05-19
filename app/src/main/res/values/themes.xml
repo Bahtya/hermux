@@ -51,6 +51,10 @@
         <item name="colorPrimaryVariant">@color/hermes_teal_dark</item>
         <item name="colorOnPrimary">@color/hermes_accent</item>
         <item name="android:windowBackground">@color/hermes_teal_background</item>
+        <item name="android:textColorPrimary">@color/hermes_text_primary</item>
+        <item name="android:textColorSecondary">@color/hermes_text_secondary</item>
+        <item name="buttonBarButtonStyle">@style/Hermes.Drawer.ButtonBarStyle</item>
+        <item name="termuxActivityDrawerImageTint">@color/hermes_text_secondary</item>
     </style>
 
 </resources>
